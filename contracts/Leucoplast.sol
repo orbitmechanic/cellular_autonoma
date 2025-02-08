@@ -2,7 +2,9 @@
 pragma solidity ^0.8.21;
 
 interface INucleus {
-    function isMember(address organelleAddress) external view returns (bool);
+    function getOrganelleName(
+        address organelleAddress
+    ) external view returns (string calldata);
 }
 
 /**
@@ -18,7 +20,10 @@ contract Leucoplast {
     }
 
     modifier onlyCellMember() {
-        require(INucleus(nucleus).isMember(msg.sender), "Not a cell member");
+        require(
+            bytes(INucleus(nucleus).getOrganelleName(msg.sender)).length > 0,
+            "Cannot withdraw by external Tx."
+        );
         _;
     }
 

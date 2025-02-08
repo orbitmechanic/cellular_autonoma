@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.21;
-import "./Leucoplast.sol"; // Import the Leucoplast contract
 
 contract Nucleus {
-    string public identity;
-    mapping(string => address) private organelles;
+    string public identity; // More likely an instance number
+    mapping(string => address) private organelleName2Address; // forward lookup.
+    mapping(address => string) private organelleAddress2Name; // reverse lookup.
     mapping(string => bool) private replicableOrganelles;
-    string[] private organelleNames;
+    string[] private organelleNames; // Name list
 
     constructor(
         string memory _identity,
@@ -25,16 +25,23 @@ contract Nucleus {
 
         identity = _identity;
 
-        // Deploy the Leucoplast storage organelle
-        Leucoplast leucoplast = new Leucoplast(address(this));
-        organelles["Leucoplast"] = address(leucoplast);
-        replicableOrganelles["Leucoplast"] = false; // Ensure only one Leucoplast per cell
-        organelleNames.push("Leucoplast");
+        // Register parent as an organelle
+        organelleName2Address["Parent"] = msg.sender;
+        organelleAddress2Name[msg.sender] = "Parent";
+        replicableOrganelles["Parent"] = false;
+        organelleNames.push("Parent");
 
-        // Register remaining organelles
+        // Self-register as a member organelle
+        organelleName2Address["Nucleus"] = address(this);
+        organelleAddress2Name[address(this)] = "Nucleus";
+        replicableOrganelles["Nucleus"] = true;
+        organelleNames.push("Nucleus");
+
+        // Register remaining given organelles
         for (uint256 i = 0; i < _organelleNames.length; i++) {
             require(_organelleAddresses[i] != address(0), "Invalid address");
-            organelles[_organelleNames[i]] = _organelleAddresses[i];
+            organelleName2Address[_organelleNames[i]] = _organelleAddresses[i];
+            organelleAddress2Name[_organelleAddresses[i]] = _organelleNames[i];
             replicableOrganelles[_organelleNames[i]] = _replicationFlags[i];
             organelleNames.push(_organelleNames[i]);
         }
@@ -46,15 +53,37 @@ contract Nucleus {
         bool replicate
     ) public {
         require(organelleAddress != address(0), "Invalid address");
-        if (organelles[name] == address(0)) {
+        require(
+            msg.sender == organelleName2Address["Parent"],
+            "Must be Parent to register new organelle."
+        );
+        if (organelleName2Address[name] == address(0)) {
             organelleNames.push(name);
         }
-        organelles[name] = organelleAddress;
-        replicableOrganelles[name] = replicate; // Updated to avoid shadowing
+        organelleName2Address[name] = organelleAddress;
+        organelleAddress2Name[organelleAddress] = name;
+        replicableOrganelles[name] = replicate;
     }
 
-    function getOrganelle(string memory name) public view returns (address) {
-        return organelles[name];
+    // forward lookup
+    function getOrganelleAddress(
+        string memory name
+    ) public view returns (address) {
+        return organelleName2Address[name];
+    }
+
+    // reverse lookup
+    function getOrganelleName(
+        address organelleAddress
+    ) public view returns (string memory) {
+        return organelleAddress2Name[organelleAddress];
+    }
+
+    // Replication flag for an organelle by name
+    function shouldReplicateName(
+        string memory name
+    ) public view returns (bool) {
+        return replicableOrganelles[name];
     }
 
     function getAllOrganelles()
@@ -66,13 +95,9 @@ contract Nucleus {
         bool[] memory replicationFlags = new bool[](organelleNames.length);
 
         for (uint256 i = 0; i < organelleNames.length; i++) {
-            addresses[i] = organelles[organelleNames[i]];
+            addresses[i] = organelleName2Address[organelleNames[i]];
             replicationFlags[i] = replicableOrganelles[organelleNames[i]];
         }
         return (organelleNames, addresses, replicationFlags);
-    }
-
-    function shouldReplicate(string memory name) public view returns (bool) {
-        return replicableOrganelles[name];
     }
 }
