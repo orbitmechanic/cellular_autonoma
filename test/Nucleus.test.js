@@ -1,7 +1,7 @@
 const { expect } = require("chai");
 
 describe("Nucleus Contract", function () {
-  it("should initialize with predefined organelles", async function () {
+  it("should return all registered organelles", async function () {
     const [owner] = await ethers.getSigners();
     const Nucleus = await ethers.getContractFactory("Nucleus");
 
@@ -15,7 +15,9 @@ describe("Nucleus Contract", function () {
     );
     await nucleus.waitForDeployment();
 
-    expect(await nucleus.getOrganelle("Mitochondria")).to.equal(owner.address);
-    expect(await nucleus.getOrganelle("Golgi")).to.equal(owner.address);
+    const [names, addresses] = await nucleus.getAllOrganelles();
+
+    expect(names).to.deep.equal(organelleNames);
+    expect(addresses).to.deep.equal(organelleAddresses);
   });
 });
