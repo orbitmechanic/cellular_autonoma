@@ -54,20 +54,25 @@ contract Nucleus {
     }
 
     function registerOrganelle(
-        string calldata name,
+        string memory name,
         address organelleAddress,
         bool replicate
-    ) external {
+    ) public {
         require(organelleAddress != address(0), "Invalid address");
         require(
             msg.sender == organelleName2Address["Parent"],
-            "Only Parent can register"
-        );
-        require(
-            organelleName2Address[name] == address(0),
-            "Organelle name already registered"
+            "Must be Parent to register new organelle."
         );
 
+        // If the organelle is already registered, update its mapping instead of reverting.
+        if (organelleName2Address[name] != address(0)) {
+            organelleName2Address[name] = organelleAddress;
+            organelleAddress2Name[organelleAddress] = name;
+            replicableOrganelles[name] = replicate;
+            return;
+        }
+
+        // Otherwise, add the new organelle.
         organelleNames.push(name);
         organelleName2Address[name] = organelleAddress;
         organelleAddress2Name[organelleAddress] = name;

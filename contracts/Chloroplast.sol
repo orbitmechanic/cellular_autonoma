@@ -7,22 +7,22 @@ import "./Leucoplast.sol";
 /**
  * @title Chloroplast
  * @dev Replication organelle. Its primary function is to “copy” the cell by:
- *      - Checking that there are sufficient funds in the Leucoplast for all deployment costs.
- *      - Retrieving the list of organelles from the Nucleus.
- *      - Estimating the gas (or funds) required based on the number of replicable organelles.
+ *      - Checking that the Leucoplast holds at least a specified replication cost.
+ *      - Retrieving the organelle list from the Nucleus.
+ *      - Estimating (simulated here) the gas/funds required based on the number of replicable organelles.
  *      - Withdrawing the required funds from the Leucoplast.
  *      - Deploying new copies of those organelles flagged for replication.
- *      - Deploying a new Nucleus for the new cell copy (with the same organelle membership, except that
- *        replicable organelles are replaced by their new copies).
- *      - Withdrawing half the remaining funds from the original Leucoplast and depositing them into the new cell’s Leucoplast.
+ *      - Deploying a new Nucleus for the new cell copy (with updated organelle lists).
+ *      - Deploying a new Leucoplast for the new cell copy.
+ *      - Withdrawing half of the remaining funds in the original Leucoplast and transferring them to the new Leucoplast.
  *
- *      The contract keeps an internal array of replicated cell (Nucleus) addresses.
+ * The contract keeps an internal array of replicated cell (Nucleus) addresses.
  *
- * NOTE: This is a simplified scaffold. In production you’d use cloning patterns and careful gas‐calculation.
+ * NOTE: This is a simplified scaffold. In a production system you’d use clone factories and careful gas‑calculation.
  */
 contract Chloroplast {
-    address public nucleus; // Address of the original Nucleus contract
-    address public leucoplast; // Address of the original Leucoplast contract
+    address public nucleus; // Original Nucleus contract address
+    address payable public leucoplast; // Original Leucoplast contract address (payable)
     uint256 public replicationCostEstimate; // Funds (in wei) estimated to cover deployment gas costs
 
     // Array of replicated cell copies (new Nucleus addresses)
@@ -33,7 +33,7 @@ contract Chloroplast {
 
     constructor(
         address _nucleus,
-        address _leucoplast,
+        address payable _leucoplast,
         uint256 _replicationCostEstimate
     ) {
         nucleus = _nucleus;
@@ -48,18 +48,19 @@ contract Chloroplast {
 
     /**
      * @dev Initiates cell replication.
-     * Requirements:
-     * - The Leucoplast must hold at least replicationCostEstimate funds.
-     * - The function retrieves the full organelle list from the Nucleus.
-     * - For each organelle flagged for replication, it "deploys" a copy (here simulated by generating a dummy address).
-     * - It deploys a new Leucoplast (via its parameterless constructor) and a new Nucleus with the updated organelle list.
-     * - It then withdraws half of the remaining funds in the original Leucoplast and "deposits" them into the new Leucoplast.
      *
-     * For simplicity, this function uses simulated deployments.
+     * Requirements:
+     * - The original Leucoplast must hold at least replicationCostEstimate funds.
+     * - Retrieves the full organelle list from the Nucleus.
+     * - For each replicable organelle, a new copy is “deployed” (here simulated by generating a pseudo‑address).
+     * - Deploys a new Nucleus for the cell copy (using the original’s identity with " copy" appended, the original
+     *   Nucleus as parent, and updated organelle arrays).
+     * - Deploys a new Leucoplast for the new cell copy using the new Nucleus address.
+     * - Withdraws half of the remaining funds from the original Leucoplast and transfers them to the new Leucoplast.
      */
     function replicate() external {
-        // Check available funds from Leucoplast
-        uint256 cellBalance = Leucoplast(leucoplast).getBalance();
+        // Check available funds from the original Leucoplast.
+        uint256 cellBalance = Leucoplast(payable(leucoplast)).getBalance();
         require(
             cellBalance >= replicationCostEstimate,
             "Insufficient funds for replication"
@@ -72,70 +73,79 @@ contract Chloroplast {
             bool[] memory replicable
         ) = Nucleus(nucleus).getAllOrganelles();
         uint256 totalOrg = names.length;
-        // Count replicable organelles.
-        uint256 replicableCount = 0;
-        for (uint256 i = 0; i < totalOrg; i++) {
-            if (replicable[i]) {
-                replicableCount++;
-            }
-        }
-        // (For a real implementation, use replicableCount and contract sizes to estimate gas cost.)
-        require(
-            cellBalance >= replicationCostEstimate,
-            "Not enough funds to cover replication cost"
-        );
 
-        // Withdraw required funds from Leucoplast.
-        // (Assumes Chloroplast is registered as a cell member so that withdraw is allowed.)
+        // Count non-default organelles.
+        uint256 count = 0;
+        for (uint256 i = 0; i < totalOrg; i++) {
+            if (
+                keccak256(bytes(names[i])) == keccak256(bytes("Parent")) ||
+                keccak256(bytes(names[i])) == keccak256(bytes("Nucleus"))
+            ) {
+                continue;
+            }
+            count++;
+        }
+        // (For simplicity, we assume replicationCostEstimate is sufficient if cellBalance >= replicationCostEstimate.)
+
+        // Withdraw funds required for replication from the original Leucoplast.
         uint256 fundsForReplication = replicationCostEstimate;
-        Leucoplast(leucoplast).withdraw(
+        Leucoplast(payable(leucoplast)).withdraw(
             payable(address(this)),
             fundsForReplication
         );
 
-        // Prepare new organelle arrays for the new cell copy.
-        string[] memory newNames = new string[](totalOrg);
-        address[] memory newAddresses = new address[](totalOrg);
-        bool[] memory newRepFlags = new bool[](totalOrg);
-
+        // Allocate new arrays for the new cell copy.
+        string[] memory newNames = new string[](count);
+        address[] memory newAddresses = new address[](count);
+        bool[] memory newRepFlags = new bool[](count);
+        uint256 j = 0;
         for (uint256 i = 0; i < totalOrg; i++) {
-            newNames[i] = names[i];
+            if (
+                keccak256(bytes(names[i])) == keccak256(bytes("Parent")) ||
+                keccak256(bytes(names[i])) == keccak256(bytes("Nucleus"))
+            ) {
+                continue;
+            }
+            newNames[j] = names[i];
             if (replicable[i]) {
-                // "Deploy" a new copy for replicable organelles.
-                // For simulation, generate a dummy address.
-                newAddresses[i] = address(
+                // "Deploy" a new copy for replicable organelles (simulate by generating a pseudo‑address).
+                newAddresses[j] = address(
                     uint160(
                         uint256(keccak256(abi.encodePacked(block.timestamp, i)))
                     )
                 );
-                newRepFlags[i] = true;
+                newRepFlags[j] = true;
             } else {
-                // For non-replicable organelles, use the original address.
-                newAddresses[i] = addresses[i];
-                newRepFlags[i] = false;
+                newAddresses[j] = addresses[i];
+                newRepFlags[j] = false;
             }
+            j++;
         }
 
-        // Deploy a new Leucoplast contract for the new cell copy.
-        Leucoplast newLeucoplast = new Leucoplast();
-        address newLeucoplastAddr = address(newLeucoplast);
-
-        // Deploy a new Nucleus for the new cell copy.
-        // The new nucleus is created with the updated organelle arrays.
+        // Deploy a new Nucleus for the cell copy.
+        // Our Nucleus constructor expects five arguments: identity, parent, organelleNames, organelleAddresses, and replication flags.
         Nucleus newNucleus = new Nucleus(
             string(abi.encodePacked(Nucleus(nucleus).identity(), " copy")),
+            nucleus, // Register the original Nucleus as the parent.
             newNames,
             newAddresses,
             newRepFlags
         );
         address newNucleusAddr = address(newNucleus);
 
+        // Deploy a new Leucoplast for the new cell copy, passing the new Nucleus address.
+        Leucoplast newLeucoplast = new Leucoplast(newNucleusAddr);
+        address payable newLeucoplastAddr = payable(address(newLeucoplast));
+
         // Transfer half of the remaining funds from the original Leucoplast to the new one.
-        uint256 remainingBalance = Leucoplast(leucoplast).getBalance();
+        uint256 remainingBalance = Leucoplast(payable(leucoplast)).getBalance();
         uint256 halfBalance = remainingBalance / 2;
         // Withdraw halfBalance from the original Leucoplast.
-        Leucoplast(leucoplast).withdraw(payable(address(this)), halfBalance);
-        // Simulate deposit to new Leucoplast by transferring Ether.
+        Leucoplast(payable(leucoplast)).withdraw(
+            payable(address(this)),
+            halfBalance
+        );
+        // Transfer the withdrawn funds to the new Leucoplast.
         payable(newLeucoplastAddr).transfer(halfBalance);
 
         // Record the new cell copy.

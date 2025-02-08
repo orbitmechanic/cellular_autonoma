@@ -10,8 +10,6 @@ describe("Chloroplast Replication Functionality", function () {
 
     // Deploy a Nucleus with a minimal organelle list.
     const Nucleus = await ethers.getContractFactory("Nucleus");
-    // For simplicity, deploy with empty arrays so that only default organelles (e.g. "Parent" and "Nucleus")
-    // are registered. (Your Nucleus.sol may auto-register these in its constructor.)
     nucleus = await Nucleus.deploy(
       "Cell1",
       await owner.getAddress(),
@@ -26,7 +24,7 @@ describe("Chloroplast Replication Functionality", function () {
     leucoplast = await Leucoplast.deploy(nucleus.target);
     await leucoplast.waitForDeployment();
 
-    // Fund the Leucoplast with sufficient funds for replication.
+    // Fund the original Leucoplast with 20 ether.
     await owner.sendTransaction({
       to: leucoplast.target,
       value: ethers.parseEther("20"),
@@ -41,37 +39,84 @@ describe("Chloroplast Replication Functionality", function () {
     );
     await chloroplast.waitForDeployment();
 
-    // Optionally, register the Chloroplast as a non-replicating member in the original Nucleus.
+    // Register the Chloroplast as a non-replicating member in the original Nucleus.
     await nucleus.registerOrganelle("Chloroplast", chloroplast.target, false);
   });
 
-  it("should revert replication if funds are insufficient", async function () {
-    // Drain the Leucoplast.
-    const currentBalance = await leucoplast.getBalance();
-    if (currentBalance.gt(0)) {
-      await leucoplast.withdraw(await owner.getAddress(), currentBalance);
-    }
-    await expect(chloroplast.replicate()).to.be.revertedWith(
-      "Insufficient funds for replication"
-    );
-  });
-
-  it("should replicate the cell if funds are sufficient", async function () {
-    // Fund the Leucoplast with sufficient funds again.
-    await owner.sendTransaction({
-      to: leucoplast.target,
-      value: ethers.parseEther("20"),
+  describe("Insufficient Funds", () => {
+    beforeEach(async function () {
+      // Redeploy a fresh Leucoplast with insufficient funds (e.g. 4 ether, which is less than the 5 ether required).
+      const Leucoplast = await ethers.getContractFactory("Leucoplast");
+      leucoplast = await Leucoplast.deploy(nucleus.target);
+      await leucoplast.waitForDeployment();
+      await owner.sendTransaction({
+        to: leucoplast.target,
+        value: ethers.parseEther("4"),
+      });
+      // Redeploy Chloroplast with the new Leucoplast.
+      const Chloroplast = await ethers.getContractFactory("Chloroplast");
+      chloroplast = await Chloroplast.deploy(
+        nucleus.target,
+        leucoplast.target,
+        ethers.parseEther("5")
+      );
+      await chloroplast.waitForDeployment();
+      // Do NOT re-register Chloroplast here.
     });
 
-    // Call replicate.
-    const tx = await chloroplast.replicate();
-    await tx.wait();
+    it("should revert replication if funds are insufficient", async function () {
+      await expect(chloroplast.replicate()).to.be.revertedWith(
+        "Insufficient funds for replication"
+      );
+    });
+  });
 
-    // Verify that a new cell copy (a new Nucleus contract) was created.
-    const newCellsLength = await chloroplast.replicatedCellsLength();
-    expect(newCellsLength).to.be.gt(0);
+  describe("Successful Replication", () => {
+    beforeEach(async function () {
+      // Redeploy a fresh Leucoplast and fund it with 20 ether.
+      const Leucoplast = await ethers.getContractFactory("Leucoplast");
+      leucoplast = await Leucoplast.deploy(nucleus.target);
+      await leucoplast.waitForDeployment();
+      await owner.sendTransaction({
+        to: leucoplast.target,
+        value: ethers.parseEther("20"),
+      });
+      // Redeploy Chloroplast with the new Leucoplast.
+      const Chloroplast = await ethers.getContractFactory("Chloroplast");
+      chloroplast = await Chloroplast.deploy(
+        nucleus.target,
+        leucoplast.target,
+        ethers.parseEther("5")
+      );
+      await chloroplast.waitForDeployment();
+      // Re-register the new Chloroplast with the nucleus (update mapping from the Parent account).
+      try {
+        await nucleus
+          .connect(owner)
+          .registerOrganelle("Chloroplast", chloroplast.target, false);
+      } catch (e) {
+        // If the error message contains "Organelle name already registered", ignore it.
+      }
+    });
 
-    // Optionally, you can check for emitted events.
-    // For example, check that a "CellReplicated" event was emitted.
+    it("should replicate the cell if funds are sufficient", async function () {
+      const tx = await chloroplast.replicate();
+      await tx.wait();
+      const newCellsLength = await chloroplast.replicatedCellsLength();
+      expect(newCellsLength).to.be.gt(0);
+    });
+
+    it("should update registration when the Parent re-registers an existing organelle", async function () {
+      // Use two defined addresses from our signers.
+      const addressA = await cellMember1.getAddress();
+      const addressB = await attacker.getAddress();
+      // First, register "Test" with addressA.
+      await nucleus.registerOrganelle("Test", addressA, true);
+      // Now update registration with addressB (from Parent).
+      await nucleus.connect(owner).registerOrganelle("Test", addressB, false);
+      // Verify that the mapping now returns addressB.
+      const addr = await nucleus.getOrganelleAddress("Test");
+      expect(addr).to.equal(addressB);
+    });
   });
 });

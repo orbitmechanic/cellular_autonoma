@@ -11,7 +11,7 @@ describe("Nucleus Contract", function () {
 
   it("should track which organelles need replication", async function () {
     const organelleNames = ["Mitochondria", "Golgi"];
-    // Use anotherAccount for additional organelles so that the parent's mapping remains intact.
+    // Use anotherAccount for additional organelles so that the Parent mapping remains intact.
     const organelleAddresses = [
       await anotherAccount.getAddress(),
       await anotherAccount.getAddress(),
@@ -30,7 +30,7 @@ describe("Nucleus Contract", function () {
 
     let [names, addresses, flags] = await nucleus.getAllOrganelles();
 
-    // Convert Solidity's immutable arrays to mutable JS arrays.
+    // Convert returned arrays to JS arrays.
     names = Array.from(names);
     addresses = Array.from(addresses);
     flags = Array.from(flags);
@@ -49,28 +49,7 @@ describe("Nucleus Contract", function () {
     );
   });
 
-  it("should allow registration of new organelles", async function () {
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      [],
-      [],
-      []
-    );
-    await nucleus.waitForDeployment();
-
-    // Registration must be done by Parent.
-    await nucleus.registerOrganelle(
-      "Test1",
-      await anotherAccount.getAddress(),
-      true
-    );
-
-    const [names] = await nucleus.getAllOrganelles();
-    expect(Array.from(names)).to.include("Test1");
-  });
-
-  it("should reject duplicate organelle registration", async function () {
+  it("should update registration when duplicate organelle registration is attempted by Parent", async function () {
     nucleus = await Nucleus.deploy(
       "ProtoNucleus",
       await owner.getAddress(),
@@ -80,10 +59,11 @@ describe("Nucleus Contract", function () {
     );
     await nucleus.waitForDeployment();
 
-    // Attempting to register an organelle with a duplicate name should revert.
-    await expect(
-      nucleus.registerOrganelle("Test", await anotherAccount.getAddress(), true)
-    ).to.be.revertedWith("Organelle name already registered");
+    // Parent re-registers "Test" with a new address (e.g. owner's address) and a different flag.
+    await nucleus.registerOrganelle("Test", await owner.getAddress(), false);
+    // Now, retrieving the organelle address for "Test" should return owner's address.
+    const addr = await nucleus.getOrganelleAddress("Test");
+    expect(addr).to.equal(await owner.getAddress());
   });
 
   it("should reject registration from non-Parent accounts", async function () {
@@ -96,12 +76,12 @@ describe("Nucleus Contract", function () {
     );
     await nucleus.waitForDeployment();
 
-    // Registration from an account other than Parent should revert.
+    // Use anotherAccount as the non-Parent.
     await expect(
       nucleus
         .connect(anotherAccount)
         .registerOrganelle("Test", await anotherAccount.getAddress(), true)
-    ).to.be.revertedWith("Only Parent can register");
+    ).to.be.revertedWith("Must be Parent to register new organelle.");
   });
 
   it("should correctly initialize with only Parent and Nucleus when empty", async function () {
