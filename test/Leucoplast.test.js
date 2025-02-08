@@ -1,134 +1,133 @@
-const { ethers } = require("ethers");
 const { expect } = require("chai");
+const { ethers } = require("hardhat");
 
-describe("Leucoplast", function () {
-  let leucoplast;
-  let nucleusAddress;
-  let cellMember1;
-  let cellMember2;
-  let attacker;
-
-  // Mock implementation of INucleus interface for testing
-  const mockNucleus = {
-    getOrganelleName: (address) => {
-      if (address === cellMember1 || address === cellMember2) {
-        return "CellMember";
-      }
-      return "";
-    },
-  };
+describe("Leucoplast with real Nucleus integration", function () {
+  let nucleus, leucoplast;
+  let owner, cellMember1, cellMember2, attacker;
 
   before(async function () {
-    // Setup test environment
-    const provider = new ethers.providers.JsonRpcProvider();
-    const wallet = await provider.getSigner();
+    // Get test signers.
+    [owner, cellMember1, cellMember2, attacker] = await ethers.getSigners();
 
-    nucleusAddress = wallet.address;
-    cellMember1 = "0x12345678901234567890123456789012345";
-    cellMember2 = "0xabcdefabcdefabcdefabcdefabcd";
-    attacker = "0xdeadbeefdeadbeefdeadbeefdeadbeef";
-
-    // Deploy Leucoplast contract
-    const factory = new ethers.ContractFactory(
-      [
-        /* Leucoplast.sol bytecode */
-        // Replace with actual bytecode
-      ],
-      provider
+    // Deploy the real Nucleus contract.
+    // Pass the owner's address as the parent address and use empty arrays for extra organelles.
+    const Nucleus = await ethers.getContractFactory("Nucleus");
+    nucleus = await Nucleus.deploy(
+      "ProtoNucleus",
+      await owner.getAddress(),
+      [],
+      [],
+      []
     );
-    leucoplast = await factory.deploy(nucleusAddress);
+    await nucleus.waitForDeployment();
+
+    // Register cellMember1 as a valid cell member from the Parent account.
+    await nucleus.registerOrganelle(
+      "CellMember",
+      await cellMember1.getAddress(),
+      true
+    );
+  });
+
+  // Redeploy a fresh Leucoplast instance before each test to ensure isolation.
+  beforeEach(async function () {
+    const Leucoplast = await ethers.getContractFactory("Leucoplast");
+    leucoplast = await Leucoplast.deploy(nucleus.target);
+    await leucoplast.waitForDeployment();
   });
 
   describe("Initialization", () => {
     it("should set the nucleus address correctly", async () => {
-      expect(await leucoplast.nucleus()).to.equal(nucleusAddress);
+      // In ethers v6 the deployed contract’s address is available as .target.
+      expect(await leucoplast.nucleus()).to.equal(nucleus.target);
     });
   });
 
   describe("Withdraw Functionality", () => {
     beforeEach(async () => {
-      // Fund the Leucoplast contract
-      await leucoplast.send({ value: ethers.utils.parseEther("10") });
+      // Fund the Leucoplast contract with 10 Ether before each withdrawal test.
+      await owner.sendTransaction({
+        to: leucoplast.target,
+        value: ethers.parseEther("10"),
+      });
     });
 
-    it("should allow a cell member to withdraw up to max limit", async () => {
-      const recipient = cellMember1;
-      const amount = ethers.utils.parseEther("4"); // Half of 8 (since 10 /2 is 5, but using 4 for safety)
-
+    it("should allow a registered cell member to withdraw up to the max limit", async () => {
+      // With 10 ether in the contract, the max withdrawal is half: 5 ether.
+      // Withdraw 4 ether (which is within limit).
+      const recipient = await cellMember1.getAddress();
+      const amount = ethers.parseEther("4");
       await leucoplast.connect(cellMember1).withdraw(recipient, amount);
-      expect(await leucoplast.getBalance()).to.be.lt(
-        ethers.utils.parseEther("6")
-      );
+      // Expect remaining balance: 10 - 4 = 6 ether.
+      expect(await leucoplast.getBalance()).to.equal(ethers.parseEther("6"));
     });
 
-    it("should revert when attempting to withdraw more than max limit", async () => {
-      const recipient = cellMember1;
-      const amount = ethers.utils.parseEther("6"); // Exceeds 5 (half of 10)
-
+    it("should revert when attempting to withdraw more than the max limit", async () => {
+      // With 10 ether, attempting to withdraw 6 ether should revert.
+      const recipient = await cellMember1.getAddress();
+      const amount = ethers.parseEther("6");
       await expect(
         leucoplast.connect(cellMember1).withdraw(recipient, amount)
       ).to.be.revertedWith("Exceeds max withdrawal limit");
     });
 
-    it("should revert when attempted by a non-cell member", async () => {
-      const recipient = attacker;
-      const amount = ethers.utils.parseEther("1");
-
+    it("should revert when a non-cell member attempts to withdraw", async () => {
+      // An address that is not registered in the Nucleus will trigger getOrganelleName to revert.
+      const recipient = await attacker.getAddress();
+      const amount = ethers.parseEther("1");
       await expect(
         leucoplast.connect(attacker).withdraw(recipient, amount)
-      ).to.be.revertedWith("Cannot withdraw by external Tx.");
+      ).to.be.revertedWith("Organelle not found");
     });
   });
 
   describe("Receive Functionality", () => {
     it("should accept Ether and increase balance", async () => {
       const initialBalance = await leucoplast.getBalance();
-      const value = ethers.utils.parseEther("2");
-
-      await leucoplast.send({ value });
+      const value = ethers.parseEther("2");
+      await owner.sendTransaction({ to: leucoplast.target, value });
       expect(await leucoplast.getBalance()).to.be.gt(initialBalance);
     });
   });
 
   describe("Get Balance Functionality", () => {
     it("should return the correct balance after deposits and withdrawals", async () => {
-      // Fund the contract
-      await leucoplast.send({ value: ethers.utils.parseEther("10") });
-
-      // Withdraw some amount
-      const withdrawAmount = ethers.utils.parseEther("3");
+      // Fund the contract with 10 ether.
+      await owner.sendTransaction({
+        to: leucoplast.target,
+        value: ethers.parseEther("10"),
+      });
+      // Have cellMember1 withdraw 3 ether.
       await leucoplast
         .connect(cellMember1)
-        .withdraw(cellMember1, withdrawAmount);
-
-      expect(await leucoplast.getBalance()).to.equal(
-        ethers.utils.parseEther("7")
-      );
+        .withdraw(await cellMember1.getAddress(), ethers.parseEther("3"));
+      // Expect remaining balance: 10 - 3 = 7 ether.
+      expect(await leucoplast.getBalance()).to.equal(ethers.parseEther("7"));
     });
   });
 
   describe("Edge Cases", () => {
-    it("should handle zero withdrawal amount", async () => {
-      await expect(leucoplast.connect(cellMember1).withdraw(cellMember1, 0)).to
-        .not.be.reverted;
+    it("should handle a zero withdrawal amount without reverting", async () => {
+      await expect(
+        leucoplast
+          .connect(cellMember1)
+          .withdraw(await cellMember1.getAddress(), 0)
+      ).to.not.be.reverted;
     });
 
     it("should allow multiple withdrawals as long as each is within limit", async () => {
-      const recipient = cellMember1;
-      const amountEach = ethers.utils.parseEther("2");
-
-      // Initial fund
-      await leucoplast.send({ value: ethers.utils.parseEther("10") });
-
-      // First withdrawal
+      const recipient = await cellMember1.getAddress();
+      const amountEach = ethers.parseEther("2");
+      // Fund the contract with 10 ether.
+      await owner.sendTransaction({
+        to: leucoplast.target,
+        value: ethers.parseEther("10"),
+      });
+      // Perform two withdrawals of 2 ether each.
       await leucoplast.connect(cellMember1).withdraw(recipient, amountEach);
-
-      // Second withdrawal
       await leucoplast.connect(cellMember1).withdraw(recipient, amountEach);
-
-      expect(await leucoplast.getBalance()).to.equal(
-        ethers.utils.parseEther("6")
-      );
+      // Total withdrawn: 4 ether; remaining balance should be 6 ether.
+      expect(await leucoplast.getBalance()).to.equal(ethers.parseEther("6"));
     });
   });
 });

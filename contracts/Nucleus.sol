@@ -9,7 +9,7 @@ contract Nucleus {
     string[] private organelleNames; // Ordered list of organelle names
 
     constructor(
-        string memory _identity,
+        string memory _identity, // Name of cell, likely "strain-serial#
         address _parentAddress, // Pass parent explicitly
         string[] memory _organelleNames,
         address[] memory _organelleAddresses,

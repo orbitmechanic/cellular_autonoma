@@ -4,7 +4,7 @@ pragma solidity ^0.8.21;
 interface INucleus {
     function getOrganelleName(
         address organelleAddress
-    ) external view returns (string calldata);
+    ) external view returns (string memory);
 }
 
 /**
