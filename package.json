@@ -1,0 +1,18 @@
+{
+  "name": "cellular_autonoma",
+  "version": "1.0.0",
+  "description": "Experiments in Solidity life",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "chai": "^4.5.0",
+    "hardhat": "^2.22.18",
+    "mocha": "^11.1.0"
+  }
+}
