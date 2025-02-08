@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.21;
+import "./Leucoplast.sol"; // Import the Leucoplast contract
 
 contract Nucleus {
     string public identity;
@@ -24,6 +25,13 @@ contract Nucleus {
 
         identity = _identity;
 
+        // Deploy the Leucoplast storage organelle
+        Leucoplast leucoplast = new Leucoplast(address(this));
+        organelles["Leucoplast"] = address(leucoplast);
+        replicableOrganelles["Leucoplast"] = false; // Ensure only one Leucoplast per cell
+        organelleNames.push("Leucoplast");
+
+        // Register remaining organelles
         for (uint256 i = 0; i < _organelleNames.length; i++) {
             require(_organelleAddresses[i] != address(0), "Invalid address");
             organelles[_organelleNames[i]] = _organelleAddresses[i];
