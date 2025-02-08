@@ -10,6 +10,7 @@ contract Nucleus {
 
     constructor(
         string memory _identity,
+        address _parentAddress, // Pass parent explicitly
         string[] memory _organelleNames,
         address[] memory _organelleAddresses,
         bool[] memory _replicationFlags
@@ -25,9 +26,9 @@ contract Nucleus {
 
         identity = _identity;
 
-        // Register Parent (creator) as an organelle
-        organelleName2Address["Parent"] = msg.sender;
-        organelleAddress2Name[msg.sender] = "Parent";
+        // Explicitly assign Parent to the given address
+        organelleName2Address["Parent"] = _parentAddress;
+        organelleAddress2Name[_parentAddress] = "Parent";
         replicableOrganelles["Parent"] = false;
         organelleNames.push("Parent");
 
@@ -37,7 +38,7 @@ contract Nucleus {
         replicableOrganelles["Nucleus"] = true;
         organelleNames.push("Nucleus");
 
-        // Register remaining given organelles
+        // Register additional organelles
         for (uint256 i = 0; i < _organelleNames.length; i++) {
             require(_organelleAddresses[i] != address(0), "Invalid address");
             require(
