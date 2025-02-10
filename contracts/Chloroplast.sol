@@ -10,8 +10,8 @@ import "./Leucoplast.sol";
 /**
  * @title Chloroplast
  * @dev Replication organelle. This contract is cloneable (via the initializer pattern)
- * and its replicate() function clones replicable organelles (using Clones.clone) to create
- * a new cell: it deploys a new Nucleus with updated organelle arrays and a new Leucoplast.
+ * and its replicate() function clones replicable organelles (using Clones.clone)
+ * to create a new cell copy with a new Nucleus and Leucoplast.
  */
 contract Chloroplast is Initializable {
     using Clones for address;
@@ -19,15 +19,16 @@ contract Chloroplast is Initializable {
     // Original cell’s contracts.
     address public nucleus; // Address of the original Nucleus contract.
     address payable public leucoplast; // Address of the original Leucoplast contract.
-    uint256 public replicationCostEstimate; // Cost (in wei) to cover replication funds.
+    uint256 public replicationCostEstimate; // Funds (in wei) estimated to cover deployment gas costs.
 
     // Array of replicated cell copies (new Nucleus addresses).
     address[] public replicatedCells;
 
     event ReplicationStarted(uint256 fundsUsed, uint256 newCellCount);
     event CellReplicated(address newNucleus);
+    event CloneCreated(address cloneAddress); // For testing cloneChloroplast()
 
-    // Replace constructor with initialize.
+    // Instead of a constructor, we use initialize() for clone‑ability.
     function initialize(
         address _nucleus,
         address payable _leucoplast,
@@ -44,44 +45,24 @@ contract Chloroplast is Initializable {
     }
 
     /**
-     * @dev Replicates the cell.
-     * Steps:
-     *   1. Check that the original Leucoplast holds at least replicationCostEstimate funds.
-     *   2. Withdraw that amount from the original Leucoplast.
-     *   3. Retrieve the organelle list from the original Nucleus.
-     *   4. For each organelle (skipping defaults "Parent" and "Nucleus"):
-     *         - If replicable, clone it via Clones.clone(template)
-     *         - Otherwise, copy the original address.
-     *   5. Deploy a new Nucleus by calling its initialize() function with the new arrays.
-     *   6. Deploy a new Leucoplast clone and initialize it with the new Nucleus’s address.
-     *   7. Withdraw half of the remaining funds from the original Leucoplast and transfer them to the new Leucoplast.
-     *   8. Record the new cell copy.
+     * @dev Helper function that builds new organelle arrays for the new cell copy.
+     * It skips default organelles ("Parent" and "Nucleus") and for replicable organelles clones them.
      */
-    function replicate() external {
-        // (1) Check funds.
-        uint256 cellBalance = Leucoplast(leucoplast).getBalance();
-        require(
-            cellBalance >= replicationCostEstimate,
-            "Insufficient funds for replication"
-        );
-
-        // (2) Withdraw funds required for replication.
-        uint256 fundsForReplication = replicationCostEstimate;
-        Leucoplast(leucoplast).withdraw(
-            payable(address(this)),
-            fundsForReplication
-        );
-
-        // (3) Retrieve organelle list from Nucleus.
-        (
-            string[] memory names,
-            address[] memory orgAddrs,
-            bool[] memory reps
-        ) = Nucleus(nucleus).getAllOrganelles();
+    function _buildNewOrganelleArrays(
+        string[] memory names,
+        address[] memory orgAddrs,
+        bool[] memory reps
+    )
+        private
+        returns (
+            string[] memory newNames,
+            address[] memory newAddrs,
+            bool[] memory newRepFlags
+        )
+    {
         uint256 totalOrg = names.length;
-
-        // (4) Count non-default organelles (skip "Parent" and "Nucleus").
         uint256 count = 0;
+        // Count non-default organelles.
         for (uint256 i = 0; i < totalOrg; i++) {
             if (
                 keccak256(bytes(names[i])) == keccak256(bytes("Parent")) ||
@@ -91,11 +72,9 @@ contract Chloroplast is Initializable {
             }
             count++;
         }
-        // Allocate arrays of the correct size.
-        string[] memory newNames = new string[](count);
-        address[] memory newAddrs = new address[](count);
-        bool[] memory newRepFlags = new bool[](count);
-
+        newNames = new string[](count);
+        newAddrs = new address[](count);
+        newRepFlags = new bool[](count);
         uint256 j = 0;
         for (uint256 i = 0; i < totalOrg; i++) {
             if (
@@ -106,25 +85,58 @@ contract Chloroplast is Initializable {
             }
             newNames[j] = names[i];
             if (reps[i]) {
-                // (4a) For replicable organelles, clone the template.
-                // Assumes the stored address is a template contract.
-                address newOrganelle = orgAddrs[i].clone();
-                newAddrs[j] = newOrganelle;
+                // For replicable organelles, clone the template.
+                newAddrs[j] = orgAddrs[i].clone();
                 newRepFlags[j] = true;
             } else {
-                // (4b) For non-replicable ones, copy the address.
+                // For non-replicable ones, copy the address.
                 newAddrs[j] = orgAddrs[i];
                 newRepFlags[j] = false;
             }
             j++;
         }
+    }
+
+    /**
+     * @dev Initiates cell replication.
+     * It withdraws replication funds from the original Leucoplast, builds new organelle arrays via cloning,
+     * deploys a new Nucleus (initialized with the new arrays), clones a new Leucoplast (and initializes it),
+     * transfers half of the remaining funds to the new Leucoplast, and records the new cell copy.
+     */
+    function replicate() external {
+        // (1) Check available funds.
+        uint256 cellBalance = Leucoplast(leucoplast).getBalance();
+        require(
+            cellBalance >= replicationCostEstimate,
+            "Insufficient funds for replication"
+        );
+
+        // (2) Withdraw replication funds from the original Leucoplast.
+        uint256 fundsForReplication = replicationCostEstimate;
+        Leucoplast(leucoplast).withdraw(
+            payable(address(this)),
+            fundsForReplication
+        );
+
+        // (3) Retrieve organelle list from the original Nucleus.
+        (
+            string[] memory names,
+            address[] memory orgAddrs,
+            bool[] memory reps
+        ) = Nucleus(nucleus).getAllOrganelles();
+
+        // (4) Build new organelle arrays (skipping "Parent" and "Nucleus").
+        (
+            string[] memory newNames,
+            address[] memory newAddrs,
+            bool[] memory newRepFlags
+        ) = _buildNewOrganelleArrays(names, orgAddrs, reps);
 
         // (5) Deploy a new Nucleus for the cell copy.
-        // Here, we manually deploy a new Nucleus instance and then initialize it.
         Nucleus newNucleus = new Nucleus();
         newNucleus.initialize(
             string(abi.encodePacked(Nucleus(nucleus).identity(), " copy")),
-            nucleus, // Original Nucleus is considered the parent.
+            nucleus, // Original Nucleus as parent.
             newNames,
             newAddrs,
             newRepFlags
@@ -132,18 +144,17 @@ contract Chloroplast is Initializable {
         address newNucleusAddr = address(newNucleus);
 
         // (6) Deploy a new Leucoplast clone.
-        // We assume the original Leucoplast is cloneable (it uses the initializer pattern).
-        // Using Clones.clone on leucoplast gives us a new instance.
         address newLeucoplastAddr = payable(address(leucoplast).clone());
-        // Attach the interface and initialize with the new Nucleus address.
         Leucoplast newLeucoplast = Leucoplast(payable(newLeucoplastAddr));
-
         newLeucoplast.initialize(newNucleusAddr);
 
-        // (7) Transfer half of the remaining funds from the original Leucoplast to the new one.
-        uint256 remainingBalance = Leucoplast(leucoplast).getBalance();
+        // (7) Transfer half of the remaining funds from the original Leucoplast to the new Leucoplast.
+        uint256 remainingBalance = Leucoplast(payable(leucoplast)).getBalance();
         uint256 halfBalance = remainingBalance / 2;
-        Leucoplast(leucoplast).withdraw(payable(address(this)), halfBalance);
+        Leucoplast(payable(leucoplast)).withdraw(
+            payable(address(this)),
+            halfBalance
+        );
         payable(newLeucoplastAddr).transfer(halfBalance);
 
         // (8) Record the new cell copy.
@@ -154,16 +165,17 @@ contract Chloroplast is Initializable {
     }
 
     /**
-     * @dev Makes Chloroplast cloneable. This function uses OpenZeppelin Clones to deploy
+     * @dev Makes Chloroplast cloneable. Uses OpenZeppelin’s Clones library to deploy
      * a minimal-proxy copy of this contract and then calls initialize() on it.
      */
     function cloneChloroplast() external returns (address) {
-        address cloneAddr = address(this).clone();
+        address cloneAddr = payable(address(this).clone());
         Chloroplast(payable(cloneAddr)).initialize(
             nucleus,
             leucoplast,
             replicationCostEstimate
         );
+        emit CloneCreated(cloneAddr);
         return cloneAddr;
     }
 
