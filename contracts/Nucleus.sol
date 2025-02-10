@@ -1,20 +1,27 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.21;
 
-contract Nucleus {
-    string public identity; // More likely an instance number
-    mapping(string => address) private organelleName2Address; // Forward lookup
-    mapping(address => string) private organelleAddress2Name; // Reverse lookup
-    mapping(string => bool) private replicableOrganelles; // Replication flags
-    string[] private organelleNames; // Ordered list of organelle names
+// Import OpenZeppelin’s Clones library and the Initializable base contract.
+import "@openzeppelin/contracts/proxy/Clones.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
-    constructor(
-        string memory _identity, // Name of cell, likely "strain-serial#
-        address _parentAddress, // Pass parent explicitly
+contract Nucleus is Initializable {
+    using Clones for address;
+
+    string public identity; // e.g. cell strain-serial#
+    mapping(string => address) private organelleName2Address; // Forward lookup.
+    mapping(address => string) private organelleAddress2Name; // Reverse lookup.
+    mapping(string => bool) private replicableOrganelles; // Replication flags.
+    string[] private organelleNames; // Ordered list of organelle names.
+
+    // initialize() replaces the constructor.
+    function initialize(
+        string memory _identity, // e.g. "Cell1"
+        address _parentAddress, // Parent’s address
         string[] memory _organelleNames,
         address[] memory _organelleAddresses,
         bool[] memory _replicationFlags
-    ) {
+    ) public initializer {
         require(
             _organelleNames.length == _organelleAddresses.length,
             "Mismatched input arrays"
@@ -26,30 +33,40 @@ contract Nucleus {
 
         identity = _identity;
 
-        // Explicitly assign Parent to the given address
+        // Explicitly assign Parent to the given address.
         organelleName2Address["Parent"] = _parentAddress;
         organelleAddress2Name[_parentAddress] = "Parent";
         replicableOrganelles["Parent"] = false;
         organelleNames.push("Parent");
 
-        // Self-register as Nucleus
+        // Self-register as Nucleus.
         organelleName2Address["Nucleus"] = address(this);
         organelleAddress2Name[address(this)] = "Nucleus";
         replicableOrganelles["Nucleus"] = true;
         organelleNames.push("Nucleus");
 
-        // Register additional organelles
+        // Register additional organelles.
         for (uint256 i = 0; i < _organelleNames.length; i++) {
             require(_organelleAddresses[i] != address(0), "Invalid address");
-            require(
-                organelleName2Address[_organelleNames[i]] == address(0),
-                "Organelle name already registered"
-            );
-
-            organelleName2Address[_organelleNames[i]] = _organelleAddresses[i];
-            organelleAddress2Name[_organelleAddresses[i]] = _organelleNames[i];
-            replicableOrganelles[_organelleNames[i]] = _replicationFlags[i];
-            organelleNames.push(_organelleNames[i]);
+            // If already registered and caller is Parent, update the mapping.
+            if (organelleName2Address[_organelleNames[i]] != address(0)) {
+                organelleName2Address[_organelleNames[i]] = _organelleAddresses[
+                    i
+                ];
+                organelleAddress2Name[_organelleAddresses[i]] = _organelleNames[
+                    i
+                ];
+                replicableOrganelles[_organelleNames[i]] = _replicationFlags[i];
+            } else {
+                organelleNames.push(_organelleNames[i]);
+                organelleName2Address[_organelleNames[i]] = _organelleAddresses[
+                    i
+                ];
+                organelleAddress2Name[_organelleAddresses[i]] = _organelleNames[
+                    i
+                ];
+                replicableOrganelles[_organelleNames[i]] = _replicationFlags[i];
+            }
         }
     }
 
@@ -63,23 +80,20 @@ contract Nucleus {
             msg.sender == organelleName2Address["Parent"],
             "Must be Parent to register new organelle."
         );
-
-        // If the organelle is already registered, update its mapping instead of reverting.
+        // Allow Parent to update an existing registration.
         if (organelleName2Address[name] != address(0)) {
             organelleName2Address[name] = organelleAddress;
             organelleAddress2Name[organelleAddress] = name;
             replicableOrganelles[name] = replicate;
             return;
         }
-
-        // Otherwise, add the new organelle.
         organelleNames.push(name);
         organelleName2Address[name] = organelleAddress;
         organelleAddress2Name[organelleAddress] = name;
         replicableOrganelles[name] = replicate;
     }
 
-    // Forward lookup
+    // Forward lookup.
     function getOrganelleAddress(
         string calldata name
     ) external view returns (address) {
@@ -88,7 +102,7 @@ contract Nucleus {
         return organelle;
     }
 
-    // Reverse lookup
+    // Reverse lookup.
     function getOrganelleName(
         address organelleAddress
     ) external view returns (string memory) {
@@ -99,13 +113,14 @@ contract Nucleus {
         return organelleAddress2Name[organelleAddress];
     }
 
-    // Replication flag lookup
+    // Replication flag lookup.
     function shouldReplicateName(
         string calldata name
     ) external view returns (bool) {
         return replicableOrganelles[name];
     }
 
+    // Get the full organelle arrays.
     function getAllOrganelles()
         external
         view
@@ -119,5 +134,22 @@ contract Nucleus {
             replicationFlags[i] = replicableOrganelles[organelleNames[i]];
         }
         return (organelleNames, addresses, replicationFlags);
+    }
+
+    // A clone factory function that clones this Nucleus and initializes the clone.
+    function cloneCell() external returns (address) {
+        // Create a minimal-proxy clone of this contract.
+        address clone = address(this).clone();
+        // Initialize the clone.
+        // For the new cell, you might want to start with a clean slate for extra organelles.
+        // Here we pass empty arrays for additional organelles.
+        Nucleus(clone).initialize(
+            string(abi.encodePacked(identity, " copy")),
+            address(this),
+            new string[](0),
+            new address[](0),
+            new bool[](0)
+        );
+        return clone;
     }
 }

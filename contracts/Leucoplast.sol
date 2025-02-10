@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.21;
 
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+
+// Assume INucleus is defined elsewhere
 interface INucleus {
     function getOrganelleName(
         address organelleAddress
@@ -11,11 +14,16 @@ interface INucleus {
  * @title Leucoplast
  * @dev Storage contract for a cell's basic funds and gas.
  *      It holds base tokens for transaction fees and cell reproduction.
+ *      This version is cloneable using the initializer pattern.
  */
-contract Leucoplast {
+contract Leucoplast is Initializable {
     address public nucleus;
 
-    constructor(address _nucleus) {
+    /**
+     * @dev Replaces the constructor. Must be called exactly once on the clone.
+     * @param _nucleus The address of the nucleus of the cell.
+     */
+    function initialize(address _nucleus) public initializer {
         nucleus = _nucleus;
     }
 

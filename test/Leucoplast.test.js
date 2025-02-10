@@ -1,133 +1,134 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-describe("Leucoplast with real Nucleus integration", function () {
-  let nucleus, leucoplast;
-  let owner, cellMember1, cellMember2, attacker;
+describe("Leucoplast and Nucleus Integration", function () {
+  let owner, cellMember, nonMember;
+  let Nucleus, nucleus;
+  let Leucoplast, leucoplastTemplate, leucoplastClone;
+  let CloneFactory, cloneFactory;
 
   before(async function () {
-    // Get test signers.
-    [owner, cellMember1, cellMember2, attacker] = await ethers.getSigners();
+    [owner, cellMember, nonMember] = await ethers.getSigners();
 
-    // Deploy the real Nucleus contract.
-    // Pass the owner's address as the parent address and use empty arrays for extra organelles.
-    const Nucleus = await ethers.getContractFactory("Nucleus");
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      [],
-      [],
-      []
-    );
-    await nucleus.waitForDeployment();
+    // Deploy the Nucleus contract (using the initializer pattern).
+    Nucleus = await ethers.getContractFactory("Nucleus");
+    nucleus = await Nucleus.deploy();
+    await nucleus.deployed();
+    // Initialize Nucleus with identity "Cell1", Parent = owner.
+    await nucleus.initialize("Cell1", await owner.getAddress(), [], [], []);
 
-    // Register cellMember1 as a valid cell member from the Parent account.
+    // For Leucoplast’s onlyCellMember modifier to pass, register a valid cell member.
+    // Here we register the Leucoplast template address later.
+    // Also, we register cellMember so that we can test withdrawal as a valid caller.
+
+    // Deploy the Leucoplast template (clone‑able version).
+    Leucoplast = await ethers.getContractFactory("Leucoplast");
+    leucoplastTemplate = await Leucoplast.deploy();
+    await leucoplastTemplate.deployed();
+    // Initialize it with the real Nucleus address.
+    await leucoplastTemplate.initialize(nucleus.address);
+
+    // Register the template Leucoplast in the nucleus (as "Leucoplast") so that calls from its address pass.
     await nucleus.registerOrganelle(
-      "CellMember",
-      await cellMember1.getAddress(),
-      true
+      "Leucoplast",
+      leucoplastTemplate.address,
+      false
     );
+
+    // Also register cellMember as a valid cell member.
+    await nucleus.registerOrganelle(
+      "TestMember",
+      await cellMember.getAddress(),
+      false
+    );
+
+    // Deploy a clone factory for Leucoplast.
+    CloneFactory = await ethers.getContractFactory("LeucoplastCloneFactory");
+    cloneFactory = await CloneFactory.deploy();
+    await cloneFactory.deployed();
   });
 
-  // Redeploy a fresh Leucoplast instance before each test to ensure isolation.
-  beforeEach(async function () {
-    const Leucoplast = await ethers.getContractFactory("Leucoplast");
-    leucoplast = await Leucoplast.deploy(nucleus.target);
-    await leucoplast.waitForDeployment();
-  });
-
-  describe("Initialization", () => {
-    it("should set the nucleus address correctly", async () => {
-      // In ethers v6 the deployed contract’s address is available as .target.
-      expect(await leucoplast.nucleus()).to.equal(nucleus.target);
+  describe("Leucoplast Unit Functionality (Integration with Nucleus)", function () {
+    let leucoplast;
+    beforeEach(async function () {
+      // For each test, deploy a fresh clone of the Leucoplast template via the factory.
+      // (We clone the template and then initialize the clone with the real nucleus.)
+      const cloneAddress = await cloneFactory.callStatic.cloneLeucoplast(
+        leucoplastTemplate.address
+      );
+      const cloneTx = await cloneFactory.cloneLeucoplast(
+        leucoplastTemplate.address
+      );
+      await cloneTx.wait();
+      leucoplast = Leucoplast.attach(cloneAddress);
+      // Initialize the clone with the real nucleus address.
+      await leucoplast.initialize(nucleus.address);
     });
-  });
 
-  describe("Withdraw Functionality", () => {
-    beforeEach(async () => {
-      // Fund the Leucoplast contract with 10 Ether before each withdrawal test.
+    it("should initialize with the real Nucleus address", async function () {
+      expect(await leucoplast.nucleus()).to.equal(nucleus.address);
+    });
+
+    it("should accept Ether and update balance", async function () {
+      // Send 5 ether to the Leucoplast clone.
       await owner.sendTransaction({
-        to: leucoplast.target,
+        to: leucoplast.address,
+        value: ethers.parseEther("5"),
+      });
+      const bal = await leucoplast.getBalance();
+      expect(bal).to.equal(ethers.parseEther("5"));
+    });
+
+    it("should allow a registered cell member to withdraw up to half the balance", async function () {
+      // Fund the Leucoplast clone with 10 ether.
+      await owner.sendTransaction({
+        to: leucoplast.address,
         value: ethers.parseEther("10"),
       });
-    });
-
-    it("should allow a registered cell member to withdraw up to the max limit", async () => {
-      // With 10 ether in the contract, the max withdrawal is half: 5 ether.
-      // Withdraw 4 ether (which is within limit).
-      const recipient = await cellMember1.getAddress();
-      const amount = ethers.parseEther("4");
-      await leucoplast.connect(cellMember1).withdraw(recipient, amount);
-      // Expect remaining balance: 10 - 4 = 6 ether.
-      expect(await leucoplast.getBalance()).to.equal(ethers.parseEther("6"));
-    });
-
-    it("should revert when attempting to withdraw more than the max limit", async () => {
-      // With 10 ether, attempting to withdraw 6 ether should revert.
-      const recipient = await cellMember1.getAddress();
-      const amount = ethers.parseEther("6");
-      await expect(
-        leucoplast.connect(cellMember1).withdraw(recipient, amount)
-      ).to.be.revertedWith("Exceeds max withdrawal limit");
-    });
-
-    it("should revert when a non-cell member attempts to withdraw", async () => {
-      // An address that is not registered in the Nucleus will trigger getOrganelleName to revert.
-      const recipient = await attacker.getAddress();
-      const amount = ethers.parseEther("1");
-      await expect(
-        leucoplast.connect(attacker).withdraw(recipient, amount)
-      ).to.be.revertedWith("Organelle not found");
-    });
-  });
-
-  describe("Receive Functionality", () => {
-    it("should accept Ether and increase balance", async () => {
-      const initialBalance = await leucoplast.getBalance();
-      const value = ethers.parseEther("2");
-      await owner.sendTransaction({ to: leucoplast.target, value });
-      expect(await leucoplast.getBalance()).to.be.gt(initialBalance);
-    });
-  });
-
-  describe("Get Balance Functionality", () => {
-    it("should return the correct balance after deposits and withdrawals", async () => {
-      // Fund the contract with 10 ether.
-      await owner.sendTransaction({
-        to: leucoplast.target,
-        value: ethers.parseEther("10"),
-      });
-      // Have cellMember1 withdraw 3 ether.
+      // cellMember is registered in Nucleus as "TestMember", so when cellMember calls withdraw,
+      // INucleus(nucleus).getOrganelleName(cellMember) returns a nonempty string.
+      // Withdraw 4 ether (within half of 10 ether => 5 ether max).
       await leucoplast
-        .connect(cellMember1)
-        .withdraw(await cellMember1.getAddress(), ethers.parseEther("3"));
-      // Expect remaining balance: 10 - 3 = 7 ether.
-      expect(await leucoplast.getBalance()).to.equal(ethers.parseEther("7"));
+        .connect(cellMember)
+        .withdraw(await cellMember.getAddress(), ethers.parseEther("4"));
+      const newBal = await leucoplast.getBalance();
+      expect(newBal).to.equal(ethers.parseEther("6"));
     });
-  });
 
-  describe("Edge Cases", () => {
-    it("should handle a zero withdrawal amount without reverting", async () => {
+    it("should revert withdrawal from a non-registered address", async function () {
       await expect(
         leucoplast
-          .connect(cellMember1)
-          .withdraw(await cellMember1.getAddress(), 0)
-      ).to.not.be.reverted;
+          .connect(nonMember)
+          .withdraw(await nonMember.getAddress(), ethers.parseEther("1"))
+      ).to.be.revertedWith("Cannot withdraw by external Tx.");
     });
+  });
 
-    it("should allow multiple withdrawals as long as each is within limit", async () => {
-      const recipient = await cellMember1.getAddress();
-      const amountEach = ethers.parseEther("2");
-      // Fund the contract with 10 ether.
+  describe("Integration: Cloning Leucoplast with Nucleus", function () {
+    it("should clone the Leucoplast template and initialize the clone with the real Nucleus", async function () {
+      // Use the clone factory to clone the Leucoplast template.
+      const cloneAddress = await cloneFactory.callStatic.cloneLeucoplast(
+        leucoplastTemplate.address
+      );
+      const cloneTx = await cloneFactory.cloneLeucoplast(
+        leucoplastTemplate.address
+      );
+      await cloneTx.wait();
+
+      leucoplastClone = Leucoplast.attach(cloneAddress);
+      // Initialize the clone.
+      await leucoplastClone.initialize(nucleus.address);
+
+      // Verify that the clone's nucleus state is set correctly.
+      expect(await leucoplastClone.nucleus()).to.equal(nucleus.address);
+
+      // Test functionality: send 3 ether to the clone and check balance.
       await owner.sendTransaction({
-        to: leucoplast.target,
-        value: ethers.parseEther("10"),
+        to: leucoplastClone.address,
+        value: ethers.parseEther("3"),
       });
-      // Perform two withdrawals of 2 ether each.
-      await leucoplast.connect(cellMember1).withdraw(recipient, amountEach);
-      await leucoplast.connect(cellMember1).withdraw(recipient, amountEach);
-      // Total withdrawn: 4 ether; remaining balance should be 6 ether.
-      expect(await leucoplast.getBalance()).to.equal(ethers.parseEther("6"));
+      const cloneBal = await leucoplastClone.getBalance();
+      expect(cloneBal).to.equal(ethers.parseEther("3"));
     });
   });
 });

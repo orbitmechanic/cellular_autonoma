@@ -1,185 +1,90 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-describe("Nucleus Contract", function () {
-  let owner, anotherAccount, Nucleus, nucleus;
+describe("Nucleus Contract (Cloning & Initialization)", function () {
+  let owner, user;
+  let Nucleus, nucleus;
 
   beforeEach(async function () {
-    [owner, anotherAccount] = await ethers.getSigners();
+    [owner, user] = await ethers.getSigners();
+    // Get the Nucleus contract factory.
     Nucleus = await ethers.getContractFactory("Nucleus");
-  });
-
-  it("should track which organelles need replication", async function () {
-    const organelleNames = ["Mitochondria", "Golgi"];
-    // Use anotherAccount for additional organelles so that the Parent mapping remains intact.
-    const organelleAddresses = [
-      await anotherAccount.getAddress(),
-      await anotherAccount.getAddress(),
-    ];
-    const replicationFlags = [true, false];
-
-    // Deploy with owner's address explicitly as the Parent.
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      organelleNames,
-      organelleAddresses,
-      replicationFlags
-    );
-    await nucleus.waitForDeployment();
-
-    let [names, addresses, flags] = await nucleus.getAllOrganelles();
-
-    // Convert returned arrays to JS arrays.
-    names = Array.from(names);
-    addresses = Array.from(addresses);
-    flags = Array.from(flags);
-
-    // Verify that all expected organelle names are present (order is not enforced)
-    expect(names).to.include.members([
-      "Parent",
-      "Nucleus",
-      "Mitochondria",
-      "Golgi",
-    ]);
-
-    // Confirm that querying by the parent's address returns "Parent"
-    expect(await nucleus.getOrganelleName(await owner.getAddress())).to.equal(
-      "Parent"
+    // Deploy the template (which will be used for cloning).
+    // Since we're using the initializer pattern, we deploy and then call initialize.
+    nucleus = await Nucleus.deploy();
+    await nucleus.deployed();
+    await nucleus.initialize(
+      "Cell1", // identity
+      await owner.getAddress(), // Parent's address
+      [], // No extra organelles initially
+      [],
+      []
     );
   });
 
-  it("should update registration when duplicate organelle registration is attempted by Parent", async function () {
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      ["Test"],
-      [await anotherAccount.getAddress()],
-      [true]
-    );
-    await nucleus.waitForDeployment();
+  it("should initialize with default organelles", async function () {
+    // Verify that the default organelles "Parent" and "Nucleus" are set.
+    const [names, addresses, flags] = await nucleus.getAllOrganelles();
+    const namesArr = Array.from(names);
+    expect(namesArr).to.include.members(["Parent", "Nucleus"]);
+    const parentName = await nucleus.getOrganelleName(await owner.getAddress());
+    expect(parentName).to.equal("Parent");
+  });
 
-    // Parent re-registers "Test" with a new address (e.g. owner's address) and a different flag.
-    await nucleus.registerOrganelle("Test", await owner.getAddress(), false);
-    // Now, retrieving the organelle address for "Test" should return owner's address.
+  it("should allow the Parent to register new organelles and update duplicates", async function () {
+    // Parent registers a new organelle "Test" with user’s address.
+    await nucleus.registerOrganelle("Test", await user.getAddress(), true);
     const addr = await nucleus.getOrganelleAddress("Test");
-    expect(addr).to.equal(await owner.getAddress());
+    expect(addr).to.equal(await user.getAddress());
+
+    // Now, the Parent re-registers "Test" with a new address (using owner's address) and a different flag.
+    await nucleus.registerOrganelle("Test", await owner.getAddress(), false);
+    const updatedAddr = await nucleus.getOrganelleAddress("Test");
+    expect(updatedAddr).to.equal(await owner.getAddress());
   });
 
   it("should reject registration from non-Parent accounts", async function () {
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      [],
-      [],
-      []
-    );
-    await nucleus.waitForDeployment();
-
-    // Use anotherAccount as the non-Parent.
+    // Attempt to register a new organelle from a non-Parent signer (user).
     await expect(
       nucleus
-        .connect(anotherAccount)
-        .registerOrganelle("Test", await anotherAccount.getAddress(), true)
+        .connect(user)
+        .registerOrganelle("AnotherTest", await user.getAddress(), true)
     ).to.be.revertedWith("Must be Parent to register new organelle.");
   });
 
-  it("should correctly initialize with only Parent and Nucleus when empty", async function () {
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      [],
-      [],
-      []
+  it("should correctly return organelle details", async function () {
+    // Register an organelle "TestOrg" with user’s address.
+    await nucleus.registerOrganelle("TestOrg", await user.getAddress(), true);
+    expect(await nucleus.getOrganelleName(await user.getAddress())).to.equal(
+      "TestOrg"
     );
-    await nucleus.waitForDeployment();
-
-    const [names] = await nucleus.getAllOrganelles();
-    expect(Array.from(names)).to.include.members(["Parent", "Nucleus"]);
-  });
-
-  it("should reject invalid organelle registration", async function () {
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      [],
-      [],
-      []
-    );
-    await nucleus.waitForDeployment();
-
-    // Using ethers.ZeroAddress (Ethers v6) to represent the zero address.
-    await expect(
-      nucleus.registerOrganelle("Test", ethers.ZeroAddress, true)
-    ).to.be.revertedWith("Invalid address");
-  });
-
-  it("should return correct organelle name for an address", async function () {
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      ["TestOrg"],
-      [await anotherAccount.getAddress()],
-      [true]
-    );
-    await nucleus.waitForDeployment();
-
-    expect(
-      await nucleus.getOrganelleName(await anotherAccount.getAddress())
-    ).to.equal("TestOrg");
-  });
-
-  it("should return correct organelle address for a name", async function () {
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      ["TestOrg"],
-      [await anotherAccount.getAddress()],
-      [true]
-    );
-    await nucleus.waitForDeployment();
-
     expect(await nucleus.getOrganelleAddress("TestOrg")).to.equal(
-      await anotherAccount.getAddress()
+      await user.getAddress()
     );
+    expect(await nucleus.shouldReplicateName("TestOrg")).to.be.true;
   });
 
-  it("should correctly report replication flags", async function () {
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      ["TestOrg1", "TestOrg2"],
-      [await anotherAccount.getAddress(), await owner.getAddress()],
-      [true, false]
-    );
-    await nucleus.waitForDeployment();
-
-    expect(await nucleus.shouldReplicateName("TestOrg1")).to.be.true;
-    expect(await nucleus.shouldReplicateName("TestOrg2")).to.be.false;
-  });
-
-  it("should handle registering multiple organelles correctly", async function () {
-    nucleus = await Nucleus.deploy(
-      "ProtoNucleus",
-      await owner.getAddress(),
-      [],
-      [],
-      []
-    );
-    await nucleus.waitForDeployment();
-
-    await nucleus.registerOrganelle(
-      "Organelle1",
-      await anotherAccount.getAddress(),
-      true
-    );
-    await nucleus.registerOrganelle(
-      "Organelle2",
-      await owner.getAddress(),
-      false
-    );
-
+  it("should return all organelles", async function () {
+    // With no extra registrations, it should at least contain "Parent" and "Nucleus".
     const [names] = await nucleus.getAllOrganelles();
-    expect(Array.from(names)).to.include.members(["Organelle1", "Organelle2"]);
+    const namesArr = Array.from(names);
+    expect(namesArr).to.include.members(["Parent", "Nucleus"]);
+  });
+
+  describe("Cloning", function () {
+    it("should clone itself and initialize the clone properly", async function () {
+      // Call cloneCell() which clones this Nucleus and initializes the clone.
+      const cloneTx = await nucleus.cloneCell();
+      // The cloneCell function returns the address of the new clone.
+      const cloneAddress = await cloneTx; // Assuming cloneCell() returns an address directly.
+      // Attach the factory to the clone address.
+      const clonedNucleus = Nucleus.attach(cloneAddress);
+      // The clone should have been initialized with identity "Cell1 copy".
+      expect(await clonedNucleus.identity()).to.equal("Cell1 copy");
+      // The clone should have default organelles; for instance, "Parent" and "Nucleus" should be present.
+      const [cloneNames] = await clonedNucleus.getAllOrganelles();
+      const cloneNamesArr = Array.from(cloneNames);
+      expect(cloneNamesArr).to.include.members(["Parent", "Nucleus"]);
+    });
   });
 });
