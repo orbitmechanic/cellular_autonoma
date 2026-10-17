@@ -1,0 +1,88 @@
+{
+  "v1_replicate_gas": 1822953,
+  "v1_identity_call_gas_by_depth": [
+    23997,
+    26675,
+    29467,
+    32281,
+    34980,
+    37971
+  ],
+  "v1_identity_length_by_gen": [
+    10,
+    15,
+    20,
+    25,
+    30,
+    35
+  ],
+  "v2_plantRoot_gas": 823356,
+  "v2_replicate_gas": 1080209,
+  "v2_energy_call_gas_by_depth": [
+    23882,
+    23882,
+    23882,
+    23882,
+    23882,
+    23882
+  ],
+  "v2_name_by_gen": [
+    "cell#8",
+    "cell#9",
+    "cell#10",
+    "cell#11",
+    "cell#12"
+  ],
+  "cost_per_v2_division_usd": [
+    {
+      "chain": "Ethereum L1",
+      "usd": 48.609405
+    },
+    {
+      "chain": "Arbitrum One",
+      "usd": 0.324063
+    },
+    {
+      "chain": "OP Mainnet (base)",
+      "usd": 0.162031
+    },
+    {
+      "chain": "Base",
+      "usd": 0.032406
+    },
+    {
+      "chain": "Sonic",
+      "usd": 0.000378
+    },
+    {
+      "chain": "Polygon PoS",
+      "usd": 0.016203
+    }
+  ],
+  "cost_per_v1_division_usd": [
+    {
+      "chain": "Ethereum L1",
+      "usd": 82.032885
+    },
+    {
+      "chain": "Arbitrum One",
+      "usd": 0.546886
+    },
+    {
+      "chain": "OP Mainnet (base)",
+      "usd": 0.273443
+    },
+    {
+      "chain": "Base",
+      "usd": 0.054689
+    },
+    {
+      "chain": "Sonic",
+      "usd": 0.000638
+    },
+    {
+      "chain": "Polygon PoS",
+      "usd": 0.027344
+    }
+  ]
+}

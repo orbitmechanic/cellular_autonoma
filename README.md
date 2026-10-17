@@ -1,2 +1,45 @@
 # cellular_autonoma
- Experiments in Solidity life
+
+Experiments in Solidity life: a *cell* built from address-linked smart contracts
+(Nucleus, Chloroplast, EnergyStore) that can **self-replicate** on an EVM chain
+and whose accumulated capital its colony **root owner can harvest**.
+
+## Two generations in this repo
+
+- `contracts/` — **v1** (Nucleus, Chloroplast, Leucoplast). The original
+  experiment. It compiles but its replication loop can't sustain itself (no
+  keeper/gas economics, inherited proxy-cost bloat, no harvest path).
+- `contracts/v2/` — **v2** reference rewrite (Nucleus, Chloroplast, EnergyStore,
+  Colony, ICell) that fixes v1 and adds the missing capital-harvest loop and
+  self-funded metabolism. See `DESIGN.md` for the full analysis.
+
+## What's here
+
+```
+contracts/Nucleus.sol, Chloroplast.sol, Leucoplast.sol   # v1 (original)
+contracts/v2/ICell.sol Nucleus.sol EnergyStore.sol       # v2 organelles
+contracts/v2/Chloroplast.sol Colony.sol                  # v2 metabolism + colony
+test/                     # 3 v1 characterization + 2 v2 suites (39 passing)
+scripts/gas-study.js      # bloat + cross-chain cost study -> gas-study.json
+DESIGN.md                 # findings, chain strategy, roadmap
+```
+
+## Run it
+
+```bash
+npm install
+npx hardhat compile
+npx hardhat test          # 39 passing
+npm run gas               # per-function gas report
+node scripts/gas-study.js # regenerate gas-study.json
+```
+
+## TL;DR of the findings
+
+An EVM contract cannot send its own transaction, so "self-replication without
+human intervention" really means **economic autonomy**: make it profitable for
+anyone (a keeper/bot/agent) to trigger division, and have the cell pay that
+trigger from capital it earned. On Ethereum L1 one division costs ~$49, which
+kills it; on **Base** (~$0.03) or **Sonic** (~$0.0004) the same cell can pay its
+own metabolism and be harvested. v2 implements exactly that, plus harvest, and
+fixes v1's per-generation proxy-cost bloat (measured +58% by gen 6 → flat in v2).
