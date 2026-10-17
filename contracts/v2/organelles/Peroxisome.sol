@@ -2,7 +2,8 @@
 pragma solidity ^0.8.21;
 
 import {Organelle} from "./Organelle.sol";
-import {INucleus, IEnergyStore} from "../ICell.sol";
+import {INucleus, IEnergyStore, IWorker} from "../ICell.sol";
+import {IPeroxisome} from "../IERCs.sol";
 
 interface IVacuole {
     function lockQuarantine(uint256 duration) external payable;
@@ -39,6 +40,7 @@ contract Peroxisome is Organelle {
     mapping(address => uint256) public quarantined; // per flagged agent, lifetime
 
     uint16 public threshold = 2; // distinct reporters to flag a toxin
+    uint16 public constant MAX_FLAGGED = 32; // bounded shield: act() scan is O(flagged)
     IGateway public gateway; // revenue meter to size the toxin load
     IVacuole public vacuole; // where sequestered capital is isolated
     uint256 public quarantineDuration = 30 days;
@@ -46,6 +48,7 @@ contract Peroxisome is Organelle {
 
     event Reported(address indexed reporter, address indexed agent, uint256 count);
     event Flagged(address indexed agent);
+    event ShieldSaturated(address indexed agent, uint256 count);
     event Detoxed(address indexed agent);
     event ToxinSequestered(address indexed agent, uint256 amount);
     event ShieldConfigured(address gateway_, address vacuole_, uint16 threshold_);
@@ -68,9 +71,16 @@ contract Peroxisome is Organelle {
         reportCount[agent]++;
         emit Reported(msg.sender, agent, reportCount[agent]);
         if (!flagged[agent] && reportCount[agent] >= threshold) {
-            flagged[agent] = true;
-            flaggedList.push(agent);
-            emit Flagged(agent);
+            if (flaggedList.length < MAX_FLAGGED) {
+                flagged[agent] = true;
+                flaggedList.push(agent);
+                emit Flagged(agent);
+            } else {
+                // saturated shield: the report still registers, but no new
+                // toxin is admitted this epoch (never revert a permissionless
+                // call - that would itself be a griefing surface)
+                emit ShieldSaturated(agent, reportCount[agent]);
+            }
         }
     }
 
@@ -117,6 +127,10 @@ contract Peroxisome is Organelle {
             emit ToxinSequestered(agent, move);
         }
         emit Activated(budgetWei);
+    }
+
+    function _supportsExtra(bytes4 id) internal view override returns (bool) {
+        return id == type(IWorker).interfaceId || id == type(IPeroxisome).interfaceId;
     }
 
     function label() external pure returns (string memory) {

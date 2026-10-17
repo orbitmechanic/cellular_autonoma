@@ -3,7 +3,7 @@ pragma solidity ^0.8.21;
 
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {Organelle} from "./Organelle.sol";
-import {INucleus} from "../ICell.sol";
+import {INucleus, IWorker} from "../ICell.sol";
 
 /**
  * @title Ribosome
@@ -43,6 +43,7 @@ contract Ribosome is Organelle {
     }
     Order[] public orders;
     uint256 public ordersHead;
+    uint256 public constant MAX_PENDING_ORDERS = 32; // bounded translation queue
 
     uint256 public proteinsMade;
 
@@ -70,6 +71,7 @@ contract Ribosome is Organelle {
     ///      needs a module built for its purpose).
     function order(uint256 programId) external returns (uint256 orderId) {
         require(programs[programId].active, "Ribosome: gene silenced");
+        require(orders.length - ordersHead < MAX_PENDING_ORDERS, "Ribosome: translation queue full");
         if (msg.sender != COLONY && !_isMetabolism(msg.sender) && !_isWorkerHere(msg.sender)) {
             revert NotRegisteredHere();
         }
@@ -109,6 +111,10 @@ contract Ribosome is Organelle {
 
     function ordersPending() external view returns (uint256) {
         return orders.length - ordersHead;
+    }
+
+    function _supportsExtra(bytes4 id) internal view override returns (bool) {
+        return id == type(IWorker).interfaceId;
     }
 
     function label() external pure returns (string memory) {

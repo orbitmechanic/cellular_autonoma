@@ -130,10 +130,18 @@ contract EnergyStore is Initializable, ReentrancyGuard {
 
     /// @dev Book a keeper reimbursement without sending value (pull pattern).
     ///      Increases the outstanding reserve so no sweep can strand it.
+    ///      Aging (and therefore digestibility) is only tracked for the
+    ///      first MAX_AGING_KEEPERS distinct keepers: beyond that, credits
+    ///      remain payable FOREVER - failing toward the keeper, never
+    ///      toward seizing their funds (audit: unbounded list growth).
+    uint256 public constant MAX_AGING_KEEPERS = 512;
+
     function creditCaller(address who, uint256 amount) external onlyMetabolismOrColony {
         if (claimable[who] == 0) {
             creditAge[who] = block.timestamp;
-            _creditedList.push(who);
+            if (_creditedList.length < MAX_AGING_KEEPERS) {
+                _creditedList.push(who);
+            }
         }
         claimable[who] += amount;
         outstandingCredits += amount;

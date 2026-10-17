@@ -3,6 +3,7 @@ pragma solidity ^0.8.21;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {INucleus, IEnergyStore} from "../ICell.sol";
+import {IERC165} from "../IERCs.sol";
 
 /**
  * @title Organelle (base)
@@ -30,14 +31,33 @@ abstract contract Organelle is Initializable {
         _disableInitializers();
     }
 
-    /// @dev First (and only) caller binds this clone to a cell. In practice
-    ///      the colony owner clones + initializes + grafts atomically.
+    /// @dev The Colony binds a clone to its cell. Restricted to the Colony
+    ///      (audit fix v2.2): a template clone may otherwise be front-run by
+    ///      an attacker who initializes it against a rogue "nucleus" before
+    ///      grafting - the graft would then install an organ wired to the
+    ///      wrong body. Only the assembler may do the wiring.
     function initialize(address nucleus_) external initializer {
+        require(msg.sender == COLONY, "Organelle: only the colony may bind a clone");
         _nucleus = nucleus_;
     }
 
     function nucleus() external view returns (address) {
         return _nucleus;
+    }
+
+    /**
+     * @dev ERC-165 interface detection (v2.2). The registry gate in
+     *      Nucleus.graftExternal requires any Role.WORKER instance to
+     *      supportsInterface(type(IWorker).interfaceId), so a module that
+     *      cannot answer act() is rejected before it is ever activated.
+     */
+    function supportsInterface(bytes4 interfaceId) public view virtual returns (bool) {
+        return interfaceId == type(IERC165).interfaceId || _supportsExtra(interfaceId);
+    }
+
+    /// @dev Subclass hook: workers list type(IWorker).interfaceId here.
+    function _supportsExtra(bytes4) internal view virtual returns (bool) {
+        return false;
     }
 
     /// @dev Guards the act() entry point: only the cell's own metabolism (or
