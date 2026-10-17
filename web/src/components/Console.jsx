@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { loadOrgs, saveOrg, forgetOrg } from "../lib/store.js";
-import { colonyCapital } from "../lib/wire.js";
+import { colonyCapital, attachColony } from "../lib/wire.js";
+import { ethers } from "ethers";
 import Deploy from "./Deploy.jsx";
 import CellView from "./CellView.jsx";
 
@@ -9,6 +10,8 @@ export default function Console({ session }) {
   const [selected, setSelected] = useState(null);
   const [deploying, setDeploying] = useState(false);
   const [caps, setCaps] = useState({});
+  const [importAddr, setImportAddr] = useState("");
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => { setOrgs(loadOrgs()); }, []);
 
@@ -27,6 +30,21 @@ export default function Console({ session }) {
     return () => { alive = false; };
   }, [orgs, session]);
 
+  async function doImport() {
+    if (!ethers.isAddress(importAddr)) return;
+    setImporting(true);
+    try {
+      const c = await attachColony(session.provider, importAddr);
+      const [owner, rn] = await Promise.all([c.owner(), c.rootsLength()]);
+      if (owner.toLowerCase() !== session.address.toLowerCase()) throw new Error("that colony belongs to another wallet");
+      const root = Number(rn) > 0 ? await c.roots(0) : ethers.ZeroAddress;
+      saveOrg({ colony: importAddr, root, name: "imported colony", chainId: session.chainId, owner: session.address, createdAt: Date.now() });
+      setOrgs(loadOrgs());
+      setImportAddr("");
+    } catch (e) { window.alert("import failed: " + (e.shortMessage || e.message)); }
+    finally { setImporting(false); }
+  }
+
   const mine = orgs.filter((o) => o.chainId === session.chainId);
 
   return (
@@ -35,6 +53,10 @@ export default function Console({ session }) {
         <div className="orglist-head">
           <h3>Your organisms</h3>
           <button className="cta small" onClick={() => setDeploying(true)}>+ new organism</button>
+        </div>
+        <div className="control-form inline">
+          <input className="import-addr" placeholder="import colony address 0x…" value={importAddr} onChange={(e) => setImportAddr(e.target.value)} />
+          <button className="ghost smallbtn" disabled={importing} onClick={doImport}>import</button>
         </div>
         {mine.length === 0 && !deploying && <p className="muted">No colonies on this chain yet. Plant a root — it takes about a minute.</p>}
         {mine.map((o) => (

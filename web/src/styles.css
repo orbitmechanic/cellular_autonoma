@@ -139,6 +139,8 @@ h2 { font-size: clamp(24px, 2.6vw, 34px); margin: 0 0 26px; }
 .card { background: var(--card); border: 1px solid var(--edge); border-radius: 18px; padding: 20px; }
 .orglist { display: flex; flex-direction: column; gap: 10px; align-self: start; position: sticky; top: 80px; }
 .orglist-head { display: flex; justify-content: space-between; align-items: center; }
+.import-addr { background: #071a26; border: 1px solid var(--edge); color: var(--ink); border-radius: 8px; padding: 7px 9px; flex: 1; min-width: 0; font-size: 12px; }
+.ghost.smallbtn { padding: 6px 12px; font-size: 12px; }
 .orglist h3 { margin: 0; font-size: 16px; }
 .org-card { background: var(--card); border: 1px solid var(--edge); border-radius: 14px; padding: 12px 14px; cursor: pointer;
   display: flex; flex-direction: column; gap: 3px; transition: border-color .2s; }
