@@ -1,0 +1,52 @@
+{
+  "filled": 64,
+  "render_billed_gas": 383389,
+  "render_executed_est": 479236,
+  "render_discount_gas": 95847,
+  "render_discount_eth_at_10gwei": 0.00095847,
+  "inflate_cost_gas_total": 1414400,
+  "arbitrage_table": [
+    {
+      "cheapGwei": 1,
+      "dearGwei": 5,
+      "spentEth": 0.001414,
+      "rebateEth": 0.0011,
+      "pct": 77.8
+    },
+    {
+      "cheapGwei": 1,
+      "dearGwei": 10,
+      "spentEth": 0.001414,
+      "rebateEth": 0.0022,
+      "pct": 155.5
+    },
+    {
+      "cheapGwei": 1,
+      "dearGwei": 20,
+      "spentEth": 0.001414,
+      "rebateEth": 0.0044,
+      "pct": 311.1
+    },
+    {
+      "cheapGwei": 1,
+      "dearGwei": 50,
+      "spentEth": 0.001414,
+      "rebateEth": 0.011,
+      "pct": 777.7
+    },
+    {
+      "cheapGwei": 0.01,
+      "dearGwei": 0.05,
+      "spentEth": 0.000014,
+      "rebateEth": 0.000011,
+      "pct": 77.8
+    },
+    {
+      "cheapGwei": 0.005,
+      "dearGwei": 0.2,
+      "spentEth": 0.000007,
+      "rebateEth": 0.000044,
+      "pct": 622.2
+    }
+  ]
+}

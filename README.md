@@ -30,10 +30,10 @@ contracts/v2/ICell.sol IERCs.sol Nucleus.sol EnergyStore.sol  # v2 core
 contracts/v2/Chloroplast.sol Colony.sol                  # v2 metabolism + colony
 contracts/v2/organelles/                                 # v2.1 optional cast:
     Mitochondrion(ERC-4626) Ribosome GolgiApparatus Lysosome
-    Peroxisome Vacuole Membrane(ERC-8004 surface)
+    Peroxisome Vacuole Membrane(ERC-8004 surface) Adipocyte(v2.3 fat cells)
 contracts/mocks/            # ERC-4626 vault, protein, cloner, gas burner
-test/                       # v1 characterization + v2/v2.1/v2.2 suites (79 passing)
-scripts/gas-study.js        # bloat + cross-chain cost studies -> *-study.json
+test/                       # v1 characterization + v2..v2.3 suites (85 passing)
+scripts/*-study.js          # bloat, cross-chain, and fat-cell economics studies -> *-study.json
 scripts/build_deck*.py      # regenerate the findings decks in docs/
 DESIGN.md                   # findings, chain strategy, organelle map, roadmap
 AUDIT.md                    # v2.2 full-system security audit + ERC matrix
