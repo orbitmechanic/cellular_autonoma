@@ -4,10 +4,7 @@ pragma solidity ^0.8.21;
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Organelle} from "./Organelle.sol";
 import {INucleus, IEnergyStore} from "../ICell.sol";
-
-interface IShield {
-    function screen(address agent) external view returns (bool toxin);
-}
+import {IERC165, IMembrane8004, IPeroxisome} from "../IERCs.sol";
 
 /**
  * @title Membrane
@@ -51,6 +48,11 @@ contract Membrane is Organelle {
 
     address public shield; // optional peroxisome
 
+    // ERC-8004 discovery surface: the cell describes itself so the agent
+    // economy can find it and read its registration file.
+    string public agentName;
+    string public registrationURI;
+
     uint256 public totalBinds;
     uint256 public lifetimeFees;
 
@@ -77,7 +79,15 @@ contract Membrane is Organelle {
     }
 
     /// @dev Attach the toxin shield (peroxisome). Zero detaches.
+    ///      ERC-165 gate: the shield must PROVE it speaks screen(address).
     function attachShield(address shield_) external onlyCellCore {
+        if (shield_ != address(0)) {
+            try IERC165(shield_).supportsInterface(type(IPeroxisome).interfaceId) returns (bool ok) {
+                require(ok, "Membrane: shield does not speak IPeroxisome");
+            } catch {
+                revert("Membrane: shield does not speak IPeroxisome");
+            }
+        }
         shield = shield_;
         emit ShieldAttached(shield_);
     }
@@ -95,7 +105,7 @@ contract Membrane is Organelle {
         Receptor storage r = receptors[service];
         require(r.open, "Membrane: receptor closed");
         if (shield != address(0)) {
-            require(!IShield(shield).screen(msg.sender), "Membrane: agent screened out");
+            require(!IPeroxisome(shield).screen(msg.sender), "Membrane: agent screened out");
         }
         // selective permeability: rate windows
         if (r.window > 0 && r.maxPerWindow > 0) {
@@ -138,6 +148,18 @@ contract Membrane is Organelle {
 
     function serviceCount() external view returns (uint256) {
         return _services.length;
+    }
+
+    /// @dev ERC-8004-style identity fields for the agent registry (the
+    ///      registration file itself lives at registrationURI off-chain).
+    function setAgentIdentity(string calldata name, string calldata uri) external onlyCellCore {
+        require(bytes(name).length <= 128 && bytes(uri).length <= 256, "Membrane: metadata too long");
+        agentName = name;
+        registrationURI = uri;
+    }
+
+    function _supportsExtra(bytes4 id) internal view override returns (bool) {
+        return id == type(IMembrane8004).interfaceId;
     }
 
     /// @dev Passive tip jar: anything sent to the membrane flows to the cell.

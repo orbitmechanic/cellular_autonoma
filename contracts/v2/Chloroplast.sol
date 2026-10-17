@@ -166,11 +166,13 @@ contract Chloroplast is Initializable {
             uint256 budget = pool > col.perWorkerCeiling() ? col.perWorkerCeiling() : pool;
             if (budget == 0) break;
             energy.authorize(w, budget);
-            // A single faulty organelle must not brick the whole cell:
-            // activate with try/catch and keep cycling. A revert here just
-            // means that organ skipped this cycle (it keeps its unspent
-            // ceiling, which expires on its own at the next startCycle).
-            try IWorker(w).act(budget) {
+            // A single faulty - or actively malignant - organelle must not
+            // brick the cycle: the call is gas-STIPENDED (so a spinning
+            // organ cannot burn the whole block or starve its siblings)
+            // and wrapped in try/catch (so its revert only costs it the
+            // cycle). Its spend authority dies with the window regardless.
+            uint256 organGas = col.workerGasStipend();
+            try IWorker(w).act{gas: organGas}(budget) {
                 uint256 used = budget - energy.cycleCeiling(w);
                 spent += used;
                 emit Expressed(w, used);

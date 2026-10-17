@@ -1,18 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.21;
 
-import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Organelle} from "./Organelle.sol";
-import {INucleus, IEnergyStore} from "../ICell.sol";
-
-/// @dev The minimal surface of an external yield venue (Aave-style money
-///      market, LST pool, LP position ...). Kept deliberately small so real
-///      protocol adapters can be dropped in later without touching the cell.
-interface IYield {
-    function deposit(address beneficiary) external payable;
-    function withdraw(address to, uint256 assets) external;
-    function assetsOf(address beneficiary) external view returns (uint256);
-}
+import {INucleus, IEnergyStore, IWorker} from "../ICell.sol";
+import {IERC4626} from "../IERCs.sol";
 
 /**
  * @title Mitochondrion
@@ -21,13 +12,21 @@ interface IYield {
  *      the Membrane earns from the outside world, the mitochondrion grows
  *      what the cell already has.
  *
+ *      v2.2: speaks the ERC-4626 vault standard (was a bespoke IYield), so
+ *      ANY compliant venue - Aave, Morpho, an LST wrapper - is a drop-in
+ *      respiratory substrate with zero cell changes. `principal` is the cost
+ *      basis in assets; the invariant yield == stakedAssets() - principal is
+ *      kept exact by only withdrawing yield for harvest and retiring basis
+ *      1:1 for principal redemptions - share-proportional accounting (with
+ *      its rounding drift) is unnecessary in asset space.
+ *
  *      Each activation cycle (Chloroplast.express -> act(budget)):
- *        1. if the external venue holds more than the staking target, the
- *           excess is unstaked home to the EnergyStore (liquidity first),
- *        2. accrued yield above principal is harvested to the EnergyStore
- *           (income lands as FOOD, credited to this organelle),
- *        3. if the cell holds more than its operating float, the surplus up
- *           to the budget is pulled via the cycle ceiling and re-deposited.
+ *        1. harvest ATP: yield above basis is withdrawn STRAIGHT to the
+ *           EnergyStore as food, bounded by maxWithdraw (venue liquidity),
+ *        2. if over the staking target or the in-cell float is tight, the
+ *           excess breathes out (unstakes) to the EnergyStore,
+ *        3. surplus beyond the operating float is deployed against the
+ *           cycle ceiling, the venue's maxDeposit, and the target.
  *
  *      Capital only ever moves against the metered authorization minted by
  *      the metabolism this cycle - the organelle cannot out-spend the cell's
@@ -35,16 +34,16 @@ interface IYield {
  *      from the discretionary balance only).
  */
 contract Mitochondrion is Organelle {
-    address public vault; // external yield venue
-    uint16 public stakeTargetBps = 5000; // hold up to 50% of the cell's balance staked
-    uint16 public minFloatBps = 3000; // never unstake below 30% held in-cell (operating float)
-    uint16 public deployFloorBps = 250; // don't breathe over dust: only deploy when store > 2.5% above target*balance
 
-    uint256 public principal; // wei we've pushed into the vault (for yield accounting)
+    IERC4626 public vault; // external ERC-4626 yield venue
+    uint16 public stakeTargetBps = 5000; // hold up to 50% of the cell's assets staked
+    uint16 public minFloatBps = 3000; // never leave in-cell float under 30% of assets
 
-    event Respired(uint256 deposited);
+    uint256 public principal; // cost basis (wei) of shares currently held
+
+    event Respired(uint256 assets, uint256 shares);
     event ATPHarvested(uint256 assets);
-    event Retired(uint256 assets);
+    event Retired(uint256 assets, uint256 shares);
     event VenueConfigured(address vault, uint16 stakeTargetBps, uint16 minFloatBps);
 
     constructor(address colony_) Organelle(colony_) {}
@@ -52,70 +51,98 @@ contract Mitochondrion is Organelle {
     /// @dev Configure the venue + posture. Cell-core policy, not worker action.
     function configure(address vault_, uint16 stakeTargetBps_, uint16 minFloatBps_) external onlyCellCore {
         require(stakeTargetBps_ <= 9000 && minFloatBps_ <= 9000, "Mitochondrion: bps too hot");
-        vault = vault_;
+        require(vault_.code.length > 0, "Mitochondrion: venue has no code");
+        vault = IERC4626(vault_);
         stakeTargetBps = stakeTargetBps_;
         minFloatBps = minFloatBps_;
         emit VenueConfigured(vault_, stakeTargetBps_, minFloatBps_);
     }
 
+    function sharesHeld() public view returns (uint256) {
+        return address(vault) == address(0) ? 0 : vault.balanceOf(address(this));
+    }
+
+    function stakedAssets() public view returns (uint256) {
+        return address(vault) == address(0) ? 0 : vault.previewRedeem(sharesHeld());
+    }
+
     function act(uint256 budgetWei) external {
         _requireActivation();
         IEnergyStore store = _store();
-        uint256 inCell = store.getBalance();
-        uint256 staked = vault == address(0) ? 0 : IYield(vault).assetsOf(address(this));
-        uint256 total = inCell + staked;
 
-        if (vault != address(0)) {
-            // 1. harvest ATP (assets above principal) home as income
+        if (address(vault) != address(0)) {
+            // 1. harvest ATP (assets above cost basis) home as food.
+            //    Withdrawing yield does NOT touch the basis: the invariant
+            //    `yield == staked - principal` holds exactly in asset space,
+            //    which is why no share-proportional basis math is needed.
+            uint256 staked = stakedAssets();
             if (staked > principal) {
                 uint256 yield_ = staked - principal;
-                IYield(vault).withdraw(address(store), yield_);
-                emit ATPHarvested(yield_);
-                staked = IYield(vault).assetsOf(address(this));
-                inCell = store.getBalance();
-                total = inCell + staked;
+                uint256 liquid = vault.maxWithdraw(address(this));
+                uint256 take = yield_ > liquid ? liquid : yield_;
+                if (take > 0) {
+                    vault.withdraw(take, address(store), address(this));
+                    emit ATPHarvested(take);
+                }
             }
 
-            // 2. if over target or liquidity is tight, breathe out
+            // 2. breathe out when over target or when the cell needs float.
+            //    Principal redemptions retire basis 1:1 (clamped) - any
+            //    slippage re-prices into `yield` and gets harvested next
+            //    cycle; nothing is ever double-counted.
+            uint256 inCell = store.getBalance();
+            staked = stakedAssets();
+            uint256 total = inCell + staked;
             uint256 target = (total * stakeTargetBps) / 10000;
-            if (staked > target || inCell < (total * minFloatBps) / 10000) {
-                uint256 needHome = staked - target;
-                uint256 floatTarget = (total * minFloatBps) / 10000;
-                if (inCell < floatTarget) {
-                    uint256 extra = floatTarget - inCell;
-                    needHome = extra > needHome ? extra : needHome;
-                    if (needHome > staked) needHome = staked;
-                }
-                if (needHome > 0) {
-                    IYield(vault).withdraw(address(store), needHome);
-                    principal = principal > needHome ? principal - needHome : 0;
-                    emit Retired(needHome);
+            uint256 floatFloor = (total * minFloatBps) / 10000;
+            {
+                uint256 needHome = 0;
+                uint256 over = staked > target ? staked - target : 0;
+                uint256 shortFloat = inCell < floatFloor ? floatFloor - inCell : 0;
+                needHome = over > shortFloat ? over : shortFloat;
+                uint256 liquid = vault.maxWithdraw(address(this));
+                uint256 take = needHome > liquid ? liquid : needHome;
+                if (take > 0) {
+                    uint256 sharesBefore = sharesHeld();
+                    vault.withdraw(take, address(store), address(this));
+                    if (take <= principal) {
+                        principal -= take;
+                    } else {
+                        emit ATPHarvested(take - principal); // excess was yield
+                        principal = 0;
+                    }
+                    emit Retired(take, sharesBefore - sharesHeld());
                 }
             }
 
-            // 3. otherwise deploy surplus into respiration, against the cycle ceiling
+            // 3. deploy surplus into respiration (bounded 4 ways).
             inCell = store.getBalance();
-            staked = IYield(vault).assetsOf(address(this));
-            total = inCell + staked;
+            total = inCell + stakedAssets();
             target = (total * stakeTargetBps) / 10000;
-            if (staked < target) {
-                uint256 want = target - staked;
-                // keep the in-cell float: only deploy the part above minFloat
-                uint256 floatFloor = (total * minFloatBps) / 10000;
-                uint256 deployable = inCell > floatFloor ? inCell - floatFloor : 0;
+            uint256 stakedNow = stakedAssets();
+            if (target > stakedNow) {
+                uint256 want = target - stakedNow;
+                uint256 floatFloor2 = (total * minFloatBps) / 10000;
+                uint256 deployable = inCell > floatFloor2 ? inCell - floatFloor2 : 0;
                 if (want > deployable) want = deployable;
                 if (want > budgetWei) want = budgetWei;
                 uint256 ceiling = store.cycleCeiling(address(this));
                 if (want > ceiling) want = ceiling;
+                uint256 venueRoom = vault.maxDeposit(address(this));
+                if (want > venueRoom) want = venueRoom;
                 if (want > 0) {
                     store.spend(payable(address(this)), want);
-                    IYield(vault).deposit{value: want}(address(this));
+                    uint256 sharesOut = vault.deposit{value: want}(want, address(this));
                     principal += want;
-                    emit Respired(want);
+                    emit Respired(want, sharesOut);
                 }
             }
         }
         emit Activated(budgetWei);
+    }
+
+    function _supportsExtra(bytes4 id) internal view override returns (bool) {
+        return id == type(IWorker).interfaceId;
     }
 
     function label() external pure returns (string memory) {

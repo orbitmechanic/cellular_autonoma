@@ -26,17 +26,18 @@ and whose accumulated capital its colony **root owner can harvest**.
 
 ```
 contracts/Nucleus.sol, Chloroplast.sol, Leucoplast.sol   # v1 (original)
-contracts/v2/ICell.sol Nucleus.sol EnergyStore.sol       # v2 core organelles
+contracts/v2/ICell.sol IERCs.sol Nucleus.sol EnergyStore.sol  # v2 core
 contracts/v2/Chloroplast.sol Colony.sol                  # v2 metabolism + colony
 contracts/v2/organelles/                                 # v2.1 optional cast:
-    Mitochondrion Ribosome GolgiApparatus Lysosome
-    Peroxisome Vacuole Membrane
-contracts/mocks/            # MockYieldVault, MockProtein (test world)
-test/                       # 3 v1 characterization + 3 v2/v2.1 suites (68 passing)
-scripts/gas-study.js        # bloat + cross-chain cost study -> gas-study.json
-scripts/build_deck.py       # regenerates the findings deck in docs/
+    Mitochondrion(ERC-4626) Ribosome GolgiApparatus Lysosome
+    Peroxisome Vacuole Membrane(ERC-8004 surface)
+contracts/mocks/            # ERC-4626 vault, protein, cloner, gas burner
+test/                       # v1 characterization + v2/v2.1/v2.2 suites (79 passing)
+scripts/gas-study.js        # bloat + cross-chain cost studies -> *-study.json
+scripts/build_deck*.py      # regenerate the findings decks in docs/
 DESIGN.md                   # findings, chain strategy, organelle map, roadmap
-docs/                       # 13-slide Impress deck (odp/pptx/pdf)
+AUDIT.md                    # v2.2 full-system security audit + ERC matrix
+docs/                       # Impress decks (odp/pptx/pdf)
 ```
 
 ## Run it

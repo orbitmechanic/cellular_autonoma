@@ -321,15 +321,23 @@ describe("v2.1 Lysosome (recycling) + organ failure tolerance", function () {
   });
 
   it("a failing organ does not brick the metabolic cycle", async function () {
-    // Graft something registered as a WORKER that cannot answer act().
+    // v2.2 raises the bar: a silent impostor can no longer even be grafted
+    // (ERC-165 registry gate). A DECLARED worker that still fails at runtime
+    // (gas-burning act under a tiny stipend) is exercised and skipped.
     const stranger = await (await ethers.getContractFactory("contracts/v2/Colony.sol:Colony")).deploy();
-    await colony.graft(rootAddr, "impostor", stranger.target, ethers.ZeroAddress, ROLE.WORKER, false);
+    await expect(colony.graft(rootAddr, "impostor", stranger.target, ethers.ZeroAddress, ROLE.WORKER, false))
+      .to.be.revertedWith("Nucleus: WORKER must speak IWorker");
+
+    const Burner = await ethers.getContractFactory("contracts/mocks/MockGasBurner.sol:MockGasBurner");
+    const burnerT = await Burner.deploy();
+    await colony.setGovernanceBounds(200_000, 24);
+    await (await colony.graftTemplate(rootAddr, "burner", burnerT.target, ROLE.WORKER, false)).wait();
     const receipt = await express(cell.chloro, ctx.keeper);
     const failed = await parseEvents(cell.chloro, receipt, "OrganFailed");
-    expect(failed[0].args.worker).to.equal(stranger.target);
-    // cycle completed despite the impostor organ (lysosome ran fine)
+    expect(failed.length).to.equal(1);
+    // cycle completed despite the malignant organ (lysosome ran fine)
     const cycle = (await parseEvents(cell.chloro, receipt, "MetabolicCycle"))[0];
-    expect(cycle.args.workers).to.be.gte(2);
+    expect(cycle.args.workers).to.equal(2);
   });
 });
 
@@ -443,9 +451,8 @@ describe("v2.1 Mitochondrion (respiration = yield income)", function () {
     ctx = await makeHealthyCell();
     ({ colony, rootAddr, cell } = ctx);
     const Mito = await ethers.getContractFactory("contracts/v2/organelles/Mitochondrion.sol:Mitochondrion");
-    const Vault = await ethers.getContractFactory("contracts/mocks/MockYieldVault.sol:MockYieldVault");
+    const Vault = await ethers.getContractFactory("contracts/mocks/MockERC4626Vault.sol:MockERC4626Vault");
     vault = await Vault.deploy();
-    await vault.setRate(1); // 1 bps of principal per second
     mito = (await graftTemplate(colony, rootAddr, "mitochondrion", Mito, ROLE.WORKER, true)).instance;
     await administer(colony, rootAddr, mito, "configure", vault.target, 5000, 3000);
   });
@@ -453,7 +460,7 @@ describe("v2.1 Mitochondrion (respiration = yield income)", function () {
   it("deploys surplus to the venue up to the cycle budget and keeps a float", async function () {
     await express(cell.chloro, ctx.keeper);
     // budget = min(10 ether perWorkerCeiling, 25% of available) = 10
-    expect(await vault.assetsOf(mito.target)).to.be.closeTo(ethers.parseEther("10"), ethers.parseEther("0.01"));
+    expect(await mito.stakedAssets()).to.be.closeTo(ethers.parseEther("10"), ethers.parseEther("0.01"));
     expect(await mito.principal()).to.equal(ethers.parseEther("10"));
     const store = await cell.energy.getBalance();
     expect(store).to.be.closeTo(ethers.parseEther("90"), ethers.parseEther("0.1"));
@@ -461,23 +468,23 @@ describe("v2.1 Mitochondrion (respiration = yield income)", function () {
 
   it("harvests accrued ATP as food, then re-deploys to target", async function () {
     await express(cell.chloro, ctx.keeper);
-    await ethers.provider.send("evm_increaseTime", [3600]); // 1 h -> ~36% on 10
-    await ethers.provider.send("evm_mine", []);
+    // ERC-4626 mock accrues yield from external payments into the pool
+    await ctx.owner.sendTransaction({ to: vault.target, value: ethers.parseEther("2") });
     const before = await cell.energy.getBalance();
     const receipt = await express(cell.chloro, ctx.keeper);
     const harvest = (await parseEvents(mito, receipt, "ATPHarvested"))[0];
     expect(harvest).to.exist;
-    expect(harvest.args.assets).to.be.gte(ethers.parseEther("2")); // substantial yield
+    expect(harvest.args.assets).to.be.gte(ethers.parseEther("1.9")); // substantial yield
     // cell grew: even after re-deploying to target and the keeper credit,
     // total assets beat the pre-yield total.
-    const total = (await cell.energy.getBalance()) + (await vault.assetsOf(mito.target));
+    const total = (await cell.energy.getBalance()) + (await mito.stakedAssets());
     expect(total).to.be.gt(before + ethers.parseEther("10"));
-    expect(await mito.principal()).to.be.gte(ethers.parseEther("20"));
+    expect(await mito.principal()).to.be.gte(ethers.parseEther("18"));
   });
 
   it("breathes out (unstakes) when the cell gets liquidity-hungry for division", async function () {
     await express(cell.chloro, ctx.keeper); // stake ~10 of the 100
-    const staked1 = await vault.assetsOf(mito.target);
+    const staked1 = await mito.stakedAssets();
     expect(staked1).to.be.gt(ethers.parseEther("9"));
 
     // a big division drains the in-cell balance: 85 ether endowment
@@ -490,7 +497,7 @@ describe("v2.1 Mitochondrion (respiration = yield income)", function () {
     const receipt = await express(cell.chloro, ctx.keeper);
     const retired = await parseEvents(mito, receipt, "Retired");
     expect(retired.length).to.be.gte(1);
-    const staked2 = await vault.assetsOf(mito.target);
+    const staked2 = await mito.stakedAssets();
     expect(staked2).to.be.lt(staked1); // capital pulled back from respiration
     expect(await cell.energy.getBalance()).to.be.gt(storeAfterBirth); // liquidity restored
   });
@@ -508,8 +515,7 @@ describe("v2.1 full organism: expression + mitosis + inheritance", function () {
     const Perox = await ethers.getContractFactory("contracts/v2/organelles/Peroxisome.sol:Peroxisome");
     const Vac = await ethers.getContractFactory("contracts/v2/organelles/Vacuole.sol:Vacuole");
     const Memb = await ethers.getContractFactory("contracts/v2/organelles/Membrane.sol:Membrane");
-    const vault = await (await ethers.getContractFactory("contracts/mocks/MockYieldVault.sol:MockYieldVault")).deploy();
-    await vault.setRate(1);
+    const vault = await (await ethers.getContractFactory("contracts/mocks/MockERC4626Vault.sol:MockERC4626Vault")).deploy();
 
     const mito = (await graftTemplate(colony, rootAddr, "mitochondrion", Mito, ROLE.WORKER, true)).instance;
     await graftTemplate(colony, rootAddr, "ribosome", Ribo, ROLE.WORKER, true);
@@ -529,16 +535,16 @@ describe("v2.1 full organism: expression + mitosis + inheritance", function () {
     const SVC2 = ethers.id("svc");
     await ctx.memb.connect(agent).bind(SVC2, { value: ethers.parseEther("0.25") });
 
+    const MitoF = await ethers.getContractFactory("contracts/v2/organelles/Mitochondrion.sol:Mitochondrion");
     const mitoName = await cell.nucleus.organelleByName("mitochondrion");
-    const totalAssets = async () =>
-      (await cell.energy.getBalance()) + (await ctx.vault.assetsOf(mitoName.instance));
+    const mitoCell = MitoF.attach(mitoName.instance);
+    const totalAssets = async () => (await cell.energy.getBalance()) + (await mitoCell.stakedAssets());
 
     const start = await totalAssets();
     for (let c = 0; c < 3; c++) {
       await ctx.memb.connect(agent).bind(SVC2, { value: ethers.parseEther("0.25") });
       await express(cell.chloro, ctx.keeper);
-      await ethers.provider.send("evm_increaseTime", [600]); // let ATP accrue
-      await ethers.provider.send("evm_mine", []);
+      await ctx.owner.sendTransaction({ to: ctx.vault.target, value: ethers.parseEther("0.3") }); // ATP inflow
     }
     const end = await totalAssets();
     expect(end).to.be.gt(start); // services + yield beat keeper credits

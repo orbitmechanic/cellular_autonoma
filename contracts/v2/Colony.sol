@@ -59,11 +59,16 @@ contract Colony is Ownable {
     uint16 public workerBudgetBps = 2500; // up to 25% of discretionary food may flow to workers per cycle
     uint256 public perWorkerCeiling = 5 ether; // hard per-worker cap per cycle
     uint256 public creditTTL = 30 days; // unclaimed keeper credits past this are digestible
+    uint256 public workerGasStipend = 2_000_000; // hard gas ceiling per organ per cycle (audit: DoS; sized to cover a full 64-package Golgi batch with margin)
+    uint16 public maxAuxiliaryOrganelles = 24; // registry growth bound (audit: unbounded scans)
 
     event RootPlanted(address indexed nucleus, uint256 serial, uint256 endowment);
     event Birth(address indexed parent, address indexed child, uint256 serial, uint16 generation, uint256 endowment, uint256 tithe, uint256 fee);
     event Harvested(address indexed fromCell, uint256 amount, address indexed recipient);
     event Grafted(address indexed cell, string name, address instance, uint8 role);
+    event CycleParamsSet(uint256 interval, uint16 workerBudgetBps, uint256 perWorkerCeiling, uint256 creditTTL);
+    event GovernanceBoundsSet(uint256 workerGasStipend, uint16 maxAuxiliaryOrganelles);
+    event DivisionParamsSet();
     event BirthDefect(address indexed child, address organelleClone);
     event Apoptosis(address indexed cell, uint256 swept);
 
@@ -317,6 +322,7 @@ contract Colony is Ownable {
         keeperStipend = keeperStipend_;
         maxRefundBps = maxRefundBps_;
         maxRefundCap = maxRefundCap_;
+        emit DivisionParamsSet();
     }
 
     function setHarvestRecipient(address who) external onlyOwner {
@@ -331,6 +337,17 @@ contract Colony is Ownable {
         workerBudgetBps = workerBudgetBps_;
         perWorkerCeiling = perWorkerCeiling_;
         creditTTL = creditTTL_;
+        emit CycleParamsSet(interval, workerBudgetBps_, perWorkerCeiling_, creditTTL_);
+    }
+
+    /// @dev v2.2 audit bounds: per-organ gas stipend + registry size cap.
+    function setGovernanceBounds(uint256 workerGasStipend_, uint16 maxAux_) external onlyOwner {
+        require(workerGasStipend_ >= 50_000, "Colony: stipend below any organ");
+        require(workerGasStipend_ <= 6_000_000, "Colony: stipend is the whole block");
+        require(maxAux_ >= 3, "Colony: too few slots for the cast");
+        workerGasStipend = workerGasStipend_;
+        maxAuxiliaryOrganelles = maxAux_;
+        emit GovernanceBoundsSet(workerGasStipend_, maxAux_);
     }
 
     /// @dev Owner tunes the keeper gas budget per chain (mainnet vs L2 vs

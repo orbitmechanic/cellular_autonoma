@@ -3,7 +3,8 @@ pragma solidity ^0.8.21;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {INucleus} from "./ICell.sol";
+import {INucleus, IColony, IWorker} from "./ICell.sol";
+import {IERC165} from "./IERCs.sol";
 
 /**
  * @title Nucleus (v2)
@@ -42,6 +43,7 @@ contract Nucleus is Initializable {
     mapping(bytes32 => Entry) private _byName;
     mapping(address => bytes32) private _byAddress;
     address[] private _children;
+    uint256 public auxCount; // organelles beyond the core trio - capped by the colony
 
     address public immutable COLONY;
 
@@ -99,6 +101,28 @@ contract Nucleus is Initializable {
     function _register(string memory n, address instance, address template, uint8 role, bool replicable) private {
         bytes32 key = keccak256(bytes(n));
         INucleus.Role r = INucleus.Role(role);
+        bool core = r == INucleus.Role.NUCLEUS || r == INucleus.Role.ENERGY || r == INucleus.Role.METABOLISM;
+        if (!core) {
+            // ERC-165 registry gate: anything claiming WORKER must PROVE it
+            // speaks IWorker, so the metabolism can never call act() on a
+            // module that would certainly revert.
+            if (r == INucleus.Role.WORKER) {
+                // try/catch so a module WITHOUT supportsInterface fails with
+                // this clear reason rather than a bare no-data revert
+                try IERC165(instance).supportsInterface(type(IWorker).interfaceId) returns (bool ok) {
+                    require(ok, "Nucleus: WORKER must speak IWorker");
+                } catch {
+                    revert("Nucleus: WORKER must speak IWorker");
+                }
+            }
+            // A fresh name OR a re-graft over a tombstoned (evicted) slot
+            // consumes an auxiliary unit; plain replacement does not.
+            bool occupied = _byName[key].indexPlusOne != 0 && _byName[key].data.role != INucleus.Role.NONE;
+            if (!occupied) {
+                require(auxCount < IColony(COLONY).maxAuxiliaryOrganelles(), "Nucleus: auxiliary organelle limit");
+                auxCount++;
+            }
+        }
         if (_byName[key].indexPlusOne != 0) {
             // Re-registration replaces the instance but keeps array position.
             Entry storage e = _byName[key];
@@ -260,6 +284,8 @@ contract Nucleus is Initializable {
         delete _byAddress[o.instance];
         o.instance = address(0);
         o.template = address(0);
+        o.role = INucleus.Role.NONE; // frees the auxiliary slot too
+        if (auxCount > 0) auxCount--;
         emit OrganelleRegistered(n, address(0), address(0), INucleus.Role.NONE, false);
     }
 

@@ -3,7 +3,7 @@ pragma solidity ^0.8.21;
 
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Organelle} from "./Organelle.sol";
-import {INucleus, IEnergyStore} from "../ICell.sol";
+import {INucleus, IEnergyStore, IWorker} from "../ICell.sol";
 
 /**
  * @title Vacuole
@@ -106,6 +106,10 @@ contract Vacuole is Organelle {
 
     function trancheCount() external view returns (uint256) {
         return tranches.length;
+    }
+
+    function _supportsExtra(bytes4 id) internal view override returns (bool) {
+        return id == type(IWorker).interfaceId;
     }
 
     function label() external pure returns (string memory) {

@@ -3,7 +3,7 @@ pragma solidity ^0.8.21;
 
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Organelle} from "./Organelle.sol";
-import {IEnergyStore} from "../ICell.sol";
+import {IEnergyStore, IWorker} from "../ICell.sol";
 
 /**
  * @title GolgiApparatus
@@ -29,11 +29,15 @@ contract GolgiApparatus is Organelle {
         uint96 amount;
         uint64 dueAt;
         string memo;
-        bool dispatched;
-        bool cancelled;
     }
     Package[] public packages;
     uint256 public pendingTotal; // sum of amounts not yet dispatched/cancelled
+
+    /// @dev Bounded logistics (audit: unbounded array + O(n) scan growth).
+    ///      Dispatched/cancelled packages are PRUNED via swap-and-pop, so
+    ///      `packages` holds at most MAX_LIVE_PACKAGES live entries; indices
+    ///      are positions, not stable ids (the swap moves the tail forward).
+    uint256 public constant MAX_LIVE_PACKAGES = 64;
 
     event Scheduled(uint256 indexed id, address indexed recipient, uint256 amount, uint256 dueAt, string memo);
     event Dispatched(uint256 indexed id, address indexed recipient, uint256 amount);
@@ -48,23 +52,31 @@ contract GolgiApparatus is Organelle {
         if (msg.sender != COLONY && !_isMetabolism(msg.sender) && !_isWorkerHere(msg.sender)) {
             revert NotRegisteredHere();
         }
-        packages.push(Package(recipient, amount, dueAt, memo, false, false));
+        require(packages.length < MAX_LIVE_PACKAGES, "Golgi: logistics queue full");
+        packages.push(Package(recipient, amount, dueAt, memo));
         pendingTotal += amount;
         emit Scheduled(packages.length - 1, recipient, amount, dueAt, memo);
     }
 
     function cancel(uint256 id) external {
-        require(id < packages.length, "Golgi: no such package");
-        Package memory p = packages[id];
         // cancel: scheduler (if still authorized), the cell core, or the colony
         if (msg.sender != COLONY && !_isMetabolism(msg.sender) && !_isWorkerHere(msg.sender)) {
             revert NotRegisteredHere();
         }
-        if (!p.dispatched && !p.cancelled) {
-            packages[id].cancelled = true;
-            pendingTotal -= p.amount;
-            emit Cancelled(id);
+        require(id < packages.length, "Golgi: no such package");
+        Package memory p = packages[id];
+        pendingTotal -= p.amount;
+        _prune(id);
+        emit Cancelled(id);
+    }
+
+    /// @dev Swap-and-pop: move the tail into the vacated slot, drop the tail.
+    function _prune(uint256 id) private {
+        uint256 last = packages.length - 1;
+        if (id != last) {
+            packages[id] = packages[last];
         }
+        packages.pop();
     }
 
     function count() external view returns (uint256) {
@@ -74,8 +86,7 @@ contract GolgiApparatus is Organelle {
     function dueTotal() public view returns (uint256 total) {
         uint256 n = packages.length;
         for (uint256 i = 0; i < n; i++) {
-            Package memory p = packages[i];
-            if (!p.dispatched && !p.cancelled && block.timestamp >= p.dueAt) total += p.amount;
+            if (block.timestamp >= packages[i].dueAt) total += packages[i].amount;
         }
     }
 
@@ -91,14 +102,14 @@ contract GolgiApparatus is Organelle {
         if (due <= budgetWei) {
             store.spend(payable(address(this)), due);
             uint256 dispatched = 0;
-            uint256 n = packages.length;
-            for (uint256 i = 0; i < n; i++) {
-                Package storage p = packages[i];
-                if (!p.dispatched && !p.cancelled && block.timestamp >= p.dueAt) {
-                    p.dispatched = true;
+            // iterate backwards so a swap-pop never skips an entry
+            for (uint256 i = packages.length; i > 0; i--) {
+                Package memory p = packages[i - 1];
+                if (block.timestamp >= p.dueAt) {
                     pendingTotal -= p.amount;
+                    _prune(i - 1);
                     Address.sendValue(p.recipient, p.amount);
-                    emit Dispatched(i, p.recipient, p.amount);
+                    emit Dispatched(i - 1, p.recipient, p.amount);
                     dispatched++;
                 }
             }
@@ -107,6 +118,10 @@ contract GolgiApparatus is Organelle {
             emit Shipped(0, 0, due);
         }
         emit Activated(budgetWei);
+    }
+
+    function _supportsExtra(bytes4 id) internal view override returns (bool) {
+        return id == type(IWorker).interfaceId;
     }
 
     function label() external pure returns (string memory) {

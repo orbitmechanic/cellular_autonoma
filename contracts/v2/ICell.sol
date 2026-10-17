@@ -109,4 +109,6 @@ interface IColony {
     function workerBudgetBps() external view returns (uint16);
     function perWorkerCeiling() external view returns (uint256);
     function creditTTL() external view returns (uint256);
+    function maxAuxiliaryOrganelles() external view returns (uint16);
+    function workerGasStipend() external view returns (uint256);
 }
