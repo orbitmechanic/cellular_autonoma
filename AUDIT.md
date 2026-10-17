@@ -134,3 +134,17 @@ mechanics + economics, v2.1 cast behaviors, v2.2 gates/bounds/4626 attack.
    fuzz-level assurance.
 6. Epigenetics organ (governed per-lineage inheritance) — turns B3/B4
    owner-trust into contract-verified policy.
+
+
+---
+
+## 7. v2.3 addendum - the Adipocyte (fat cells)
+
+| ID | Sev | Finding / note | Disposition |
+|----|-----|----------------|-------------|
+| C1 | Info | The user-proposed mechanism (deploy fat -> selfdestruct dear) is DEAD under EIP-3529 (refund removal) + EIP-6780 (code persists). Shipping it anyway would silently fail. | IMPLEMENTED the surviving weaker form: inflate/render of storage slots; documented loudly in the contract header and DESIGN.md 6a |
+| C2 | M | Blubber is a WASTING ASSET: EIP-3298 (scheduled) removes the last storage-clear refund. A treasury booked at blubber would overstate assets when the fork lands. | Policy: blubber is income-diversification + keeper-subsidy, never treasury; `blubberValue()` marks-to-market with basefee; rent income (park) is the durable business either way |
+| C3 | L | Refunds accrue to the TX SENDER, not the contract: the cell cannot pocket its own discount. | By design in the organism: fat is spent to subsidize keepers when gas is dear (buying metabolism reliability exactly when it is scarce); the A-test proves the 1/5-cap billing signature |
+| C4 | L | Inflate loop is op-capped (MAX_OPS_PER_CYCLE=64) and array-capped (maxSlots, default 0 = inert) | verified - capacity-full cycle must not revert the organism (tested) |
+| C5 | L | `park` griefing: anyone may pay rent to grow the array | bounded by maxSlots + rentWei; the cell only profits |
+| C6 | Info | basefee==0 (some L2s) skipped both legs - the organ correctly goes passive where no volatility exists | tested by construction (dead-band test) |

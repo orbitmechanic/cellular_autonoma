@@ -254,6 +254,65 @@ tables above).
 
 ---
 
+## 6a. v2.3: the Adipocyte - storing gas as expensive state (honestly)
+
+The intuition: fatten contracts when gas is cheap, destroy them when gas is
+dear, recover the gas value. Under 2021 rules (24k selfdestruct refund, 1/2
+refund cap) that worked - the era of "gas tokens" like GST2. **EIP-3529 and
+EIP-6780 killed it**: the selfdestruct refund is gone, the code stays alive,
+and refunds can never exceed 1/5 of a transaction's gas. What SURVIVES -
+and what `Adipocyte` implements - is the weakened, honest form:
+
+- **Inflate**: write non-zero storage (22,100 gas/slot) when `block.basefee`
+  is below the cell's ceiling.
+- **Render**: clear those slots (2,900 cost, **4,800 refund**, capped at 1/5
+  of the tx) when basefee is above the floor. The discount accrues to the
+  transaction SENDER - so the organism spends its fat to SUBSIDIZE
+  keepers exactly when metabolism is expensive. Keeper attention is bought
+  where the organism needs it.
+- **Rent first, speculate second**: `park(data)` charges tenants real rent
+  to hold 32 bytes in an autonomous archive. The rent covers the inflate gas;
+  the refund option is then free upside. Income first.
+- **The wasting-asset clause**: EIP-3298 is scheduled to remove even this
+  last clearing refund. Blubber has an expiry date - it is priced as a
+  decaying option (`blubberValue()`), never as treasury. The archive and its
+  rent survive the mechanism's death.
+
+Measured on `fat-study.js` (hardhat, EIP-3529 pricing): a 64-slot render
+bills 383,389 gas against ~479,236 executed - the exact 1/5-cap signature.
+Arbitrage breakeven is a ~6.4x price ratio: fattening at 1 gwei returns
+78% of its cost rendered at 5, 156% at 10, 778% at 50 (bundled into a
+replicate-scale host transaction). On L2s with near-flat fees the Adipocyte
+correctly idles - which is why it's a cheap-chain organ, not a universal one.
+
+## 6b. v2.3: what top contracts do - and where cells fit
+
+Surveyed (2026): Uniswap v4 ($338B volume, **23k hooks** - someone else's
+organelles), Aave v3, ENS, Lido, Safe, Chainlink + keeper networks
+(Gelato/Keep3r), Across/LayerZero relayers, The Graph, Polymarket.
+
+The honest strategy is NOT "cells vs monoliths". Money markets, AMMs and
+LSTs are consensus-critical monoliths - one treasury, one attack surface,
+years of audits. The cell organism's edge is the **edge of the ecosystem**:
+
+| Neighbor | What monoliths need | The cellular answer |
+|---|---|---|
+| Aave/Compound | liquidations, credit delegates, bad-debt auctions | keeper-cells: Golgi-payrolled liquidation squads, reimbursed by `creditCaller` economics |
+| Uniswap v4 hooks | hook security review (UF just shipped a framework because hooks keep breaking), dynamic-fee tuning, honest hook registries | audit-cells + parameter-tuner cells selling tuning as Membrane services; a colony's swarm of hook-tenants diversifies blast radius |
+| Chainlink/ Gelato / Keep3r | the keepers ARE the demand | cells are keeper-first citizens: our reimbursement primitive natively pays whoever runs our cycles - and cells can run other contracts' upkeeps for fee |
+| ENS / ERC-8004 agents | discovery + reputation + payment endpoints | the Membrane's 8004-aligned registration surface: cells are the paid services agents find |
+| Lido/Morpho/ERC-4626 vaults | liquidity provision, rebalancing | the Mitochondrion's substrate; cells as LP-risk sentinels |
+| Safe/DAO treasuries | micro-treasuries with policy | a cell IS a policy treasury that runs itself (Chloroplast-gated spending) |
+
+**Robustness argument (the biological one that matters):** 1,000 small
+autonomous cells with different operators, venues, and graft configurations
+fail *independently*; one monolith bot fails everyone at once. That is
+N-version diversity, graceful degradation, and swarm economics - the
+organism doesn't out-perform the monolith, it out-SURVIVES it, and rents
+its services to the monolith's users while doing so. Explicit refusals: no
+mixers, no MEV/frontrunning bots, no stablecoin issuance - the organism
+earns as infrastructure, not as adversary.
+
 ## 7. Roadmap
 
 1. Deploy Colony to a Base Sepolia testnet; publish keeper-reimbursement params.
