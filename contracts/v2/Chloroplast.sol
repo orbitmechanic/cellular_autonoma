@@ -178,6 +178,9 @@ contract Chloroplast is Initializable {
                 emit OrganFailed(w);
             }
         }
+        // Close the spending window: anything ungranted is now unreachable
+        // until the next activation, even if a worker returns mid-cycle.
+        energy.endCycle();
 
         uint256 refund = _reimburseKeeper(entryGas);
         _lastExpress = block.timestamp;

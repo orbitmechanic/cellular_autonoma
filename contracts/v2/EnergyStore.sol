@@ -49,6 +49,7 @@ contract EnergyStore is Initializable, ReentrancyGuard {
     uint256 public digestCursor; // rotating scan cursor for digestExpiredCredits
 
     uint256 public cycleNonce; // incremented by the metabolism each express()
+    bool public cycleOpen; // spend() is only live inside an expression window
 
     function cycleCeiling(address worker) external view returns (uint256) {
         return _ceiling[worker][cycleNonce];
@@ -140,12 +141,24 @@ contract EnergyStore is Initializable, ReentrancyGuard {
     }
 
     /// @dev Metabolism marks the start of a new expression cycle, resetting
-    ///      every worker's spend ceiling (authorizations are per-cycle).
+    ///      every worker's spend ceiling (authorizations are per-cycle) and
+    ///      opening the window in which `spend` may be called at all.
     function startCycle() external {
         if (msg.sender != COLONY && INucleus(_nucleus).getRole(msg.sender) != INucleus.Role.METABOLISM) {
             revert NotMetabolismOrColony();
         }
         cycleNonce++;
+        cycleOpen = true;
+    }
+
+    /// @dev Metabolism closes the window when the cycle ends. A WORKER can
+    ///      therefore never call `spend` opportunistically between cycles:
+    ///      authorization is only spendable *while being activated*.
+    function endCycle() external {
+        if (msg.sender != COLONY && INucleus(_nucleus).getRole(msg.sender) != INucleus.Role.METABOLISM) {
+            revert NotMetabolismOrColony();
+        }
+        cycleOpen = false;
     }
 
     /// @dev Metabolism/Colony grants a WORKER the ability to `spend` up to
@@ -162,6 +175,7 @@ contract EnergyStore is Initializable, ReentrancyGuard {
     ///      Bounded by both the authorization and the discretionary balance,
     ///      so workers can never out-spend what the cell granted them.
     function spend(address payable recipient, uint256 amount) external nonReentrant {
+        require(cycleOpen, "EnergyStore: expression window closed");
         if (recipient == address(0)) revert ZeroRecipient();
         if (msg.sender != COLONY && INucleus(_nucleus).getRole(msg.sender) != INucleus.Role.WORKER) {
             revert NotCellMember();

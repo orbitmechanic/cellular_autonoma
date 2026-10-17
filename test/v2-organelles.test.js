@@ -342,10 +342,12 @@ describe("v2.1 capability controls", function () {
     golgi = (await graftTemplate(colony, rootAddr, "golgi", Golgi, ROLE.WORKER, true)).instance;
   });
 
-  it("outsiders cannot spend the cell, directly or by impersonating a worker", async function () {
+  it("the spend window is open only while the cell is working", async function () {
     const [, attacker] = await ethers.getSigners();
+    // Outside any expression cycle NOBODY can draw from the store, not even
+    // a legitimately grafted WORKER - idle grafts are inert.
     await expect(cell.energy.connect(attacker).spend(attacker.address, 1n))
-      .to.be.revertedWithCustomError(cell.energy, "NotCellMember");
+      .to.be.revertedWith("EnergyStore: expression window closed");
     await expect(golgi.connect(attacker).act(ethers.parseEther("1")))
       .to.be.revertedWithCustomError(golgi, "NotCellsMetabolism");
   });

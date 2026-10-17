@@ -73,8 +73,12 @@ interface IEnergyStore {
     ///      `amount` of capital this cycle (cumulative ceiling).
     function authorize(address worker, uint256 amount) external;
     /// @dev Metabolism/Colony: begin a new expression cycle (resets all
-    ///      worker ceilings — unspent authorization dies with the cycle).
+    ///      worker ceilings — unspent authorization dies with the next
+    ///      startCycle — and opens the window during which spend() may run).
     function startCycle() external;
+    /// @dev Metabolism/Colony: close the spend window at cycle end. Workers
+    ///      cannot draw outside the window, so idle grafts are inert.
+    function endCycle() external;
     /// @dev WORKER-only: move up to the unspent part of this worker's
     ///      authorization out of the cell. Reverts for non-workers, and for
     ///      amounts beyond the ceiling.
