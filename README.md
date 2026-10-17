@@ -40,6 +40,20 @@ AUDIT.md                    # v2.2 full-system security audit + ERC matrix
 docs/                       # Impress decks (odp/pptx/pdf)
 ```
 
+## Web console (`web/`)
+
+A React + ethers site for deploying and managing colonies from a browser:
+connect wallet -> plant an organism -> graft organs -> run keeper actions ->
+watch health, capital and lineage live, and harvest. Deploys to GitHub Pages
+via `.github/workflows/deploy-pages.yml` (Pages source: "GitHub Actions"; every push to `main`
+that touches `web/` publishes, and `workflow_dispatch` deploys any branch on demand). For local dev:
+
+```bash
+cd web && npm install && npm run dev     # http://localhost:5173
+node ../scripts/site-smoke.cjs via `npx hardhat run scripts/site-smoke.cjs`
+                                         # replays the whole user journey on a local chain
+```
+
 ## Run it
 
 ```bash
