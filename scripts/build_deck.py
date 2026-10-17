@@ -101,7 +101,7 @@ def s_mission():
     txt(pg, 1500, 900, 25000, 1400, ["The brief"], size=36, color=ACCENT, bold=True)
     txt(pg, 1500, 3000, 25000, 11000, bullets([
         (0, "Build a life-like 'cell' in Solidity: an address-linked collection of organelles on an EVM chain."),
-        (0, "Nucleus holds identity + linked modules; Chloroplast stores energy (= capital); and so on."),
+        (0, "Nucleus holds identity + linked modules; Chloroplast drives division; Leucoplast stores energy (= capital)."),
         (0, "Goal: a contract colony that self-replicates with NO human intervention."),
         (0, "It must find its own 'gas' for memory + processing once launched."),
         (0, "It must be capital-harvestable by the colony root deployer - 'or why bother?'."),
