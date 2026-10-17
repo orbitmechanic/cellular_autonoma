@@ -4,7 +4,7 @@ pragma solidity ^0.8.21;
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {INucleus, IEnergyStore} from "./ICell.sol";
+import {INucleus, IEnergyStore, IColony} from "./ICell.sol";
 
 /**
  * @title EnergyStore (v2 Leucoplast)
@@ -35,6 +35,25 @@ contract EnergyStore is Initializable, ReentrancyGuard {
     mapping(address => uint256) public claimable; // keeper -> wei owed
     uint256 public outstandingCredits; // total wei promised to keepers
 
+    // --- worker capability system: metered, expiring spend authorizations ---
+    // Ceiling granted to a WORKER organelle for cycle N. Indexed by
+    // cycleNonce so unspent authorization EXPIRES with the cycle: the
+    // next startCycle() moves to a fresh slot and the old budget is gone.
+    mapping(address => mapping(uint256 => uint256)) private _ceiling;
+    // Lifetime totals for observability.
+    mapping(address => uint256) public authorizedLifetime;
+    mapping(address => uint256) public spentLifetime;
+    // Keeper credit aging: first-seen timestamp for expiry/reclamation.
+    mapping(address => uint256) public creditAge; // keeper -> earliest unclaimed credit ts
+    address[] private _creditedList; // enumerable keepers (bounded use)
+    uint256 public digestCursor; // rotating scan cursor for digestExpiredCredits
+
+    uint256 public cycleNonce; // incremented by the metabolism each express()
+
+    function cycleCeiling(address worker) external view returns (uint256) {
+        return _ceiling[worker][cycleNonce];
+    }
+
     /// @dev Spendable balance excluding what the cell has already promised
     ///      to keepers. Harvest and mitosis draw from this, never more, so a
     ///      colony sweep can never strand an unclaimed keeper reimbursement.
@@ -50,9 +69,13 @@ contract EnergyStore is Initializable, ReentrancyGuard {
     event KeeperCredited(address indexed keeper, uint256 amount);
     event Claimed(address indexed keeper, uint256 amount);
     event RemittedUp(uint256 amount, address destination);
+    event WorkerAuthorized(address indexed worker, uint256 ceiling, uint256 cycle);
+    event WorkerSpent(address indexed worker, address indexed recipient, uint256 amount);
+    event CreditsDigested(address indexed keeper, uint256 recovered);
 
     error NotCellMember();
     error ZeroRecipient();
+    error NotMetabolismOrColony();
 
     constructor(address colony_) {
         COLONY = colony_;
@@ -107,9 +130,83 @@ contract EnergyStore is Initializable, ReentrancyGuard {
     /// @dev Book a keeper reimbursement without sending value (pull pattern).
     ///      Increases the outstanding reserve so no sweep can strand it.
     function creditCaller(address who, uint256 amount) external onlyMetabolismOrColony {
+        if (claimable[who] == 0) {
+            creditAge[who] = block.timestamp;
+            _creditedList.push(who);
+        }
         claimable[who] += amount;
         outstandingCredits += amount;
         emit KeeperCredited(who, amount);
+    }
+
+    /// @dev Metabolism marks the start of a new expression cycle, resetting
+    ///      every worker's spend ceiling (authorizations are per-cycle).
+    function startCycle() external {
+        if (msg.sender != COLONY && INucleus(_nucleus).getRole(msg.sender) != INucleus.Role.METABOLISM) {
+            revert NotMetabolismOrColony();
+        }
+        cycleNonce++;
+    }
+
+    /// @dev Metabolism/Colony grants a WORKER the ability to `spend` up to
+    ///      `amount` from the cell during the current cycle.
+    function authorize(address worker, uint256 amount) external onlyMetabolismOrColony {
+        require(worker != address(0), "EnergyStore: zero worker");
+        uint256 ceiling = _ceiling[worker][cycleNonce] + amount;
+        _ceiling[worker][cycleNonce] = ceiling;
+        authorizedLifetime[worker] += amount;
+        emit WorkerAuthorized(worker, ceiling, cycleNonce);
+    }
+
+    /// @dev A registered WORKER organelle draws against its cycle ceiling.
+    ///      Bounded by both the authorization and the discretionary balance,
+    ///      so workers can never out-spend what the cell granted them.
+    function spend(address payable recipient, uint256 amount) external nonReentrant {
+        if (recipient == address(0)) revert ZeroRecipient();
+        if (msg.sender != COLONY && INucleus(_nucleus).getRole(msg.sender) != INucleus.Role.WORKER) {
+            revert NotCellMember();
+        }
+        require(amount <= _ceiling[msg.sender][cycleNonce], "EnergyStore: over cycle ceiling");
+        uint256 spendable = address(this).balance > outstandingCredits
+            ? address(this).balance - outstandingCredits
+            : 0;
+        require(amount <= spendable, "EnergyStore: insufficient discretionary balance");
+        _ceiling[msg.sender][cycleNonce] -= amount;
+        spentLifetime[msg.sender] += amount;
+        Address.sendValue(recipient, amount);
+        emit WorkerSpent(msg.sender, recipient, amount);
+    }
+
+    /// @dev Lysosome-style reclamation: keeper credits older than the colony
+    ///      creditTTL are absorbed back into the cell's discretionary balance.
+    ///      (A keeper who never claimed was never actually owed the payout.)
+    ///      A rotating cursor keeps old scanned slots from starving new ones.
+    function digestExpiredCredits(uint256 maxOps) external returns (uint256 recovered) {
+        if (msg.sender != COLONY && INucleus(_nucleus).getRole(msg.sender) != INucleus.Role.WORKER) {
+            revert NotCellMember();
+        }
+        uint256 n = _creditedList.length;
+        if (n == 0) return 0;
+        uint256 ttl = IColony(COLONY).creditTTL();
+        for (uint256 i = 0; i < maxOps && i < n; i++) {
+            address keeper = _creditedList[(digestCursor + i) % n];
+            uint256 amt = claimable[keeper];
+            if (amt > 0 && block.timestamp >= creditAge[keeper] + ttl) {
+                claimable[keeper] = 0;
+                outstandingCredits -= amt;
+                recovered += amt;
+                emit CreditsDigested(keeper, amt);
+            }
+        }
+        digestCursor = (digestCursor + maxOps) % n;
+    }
+
+    function creditedListLength() external view returns (uint256) {
+        return _creditedList.length;
+    }
+
+    function creditedListAt(uint256 i) external view returns (address) {
+        return _creditedList[i];
     }
 
     function claim(address payable who, uint256 amount) external nonReentrant {

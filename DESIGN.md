@@ -202,6 +202,41 @@ with capital flowing up (tithes + harvest). Organs form when cells specialize:
 | `Chloroplast.sol` | gated `replicate()` (cooldown, gen-cap, reserve) + keeper reimbursement + `canReplicate()` view |
 | `Colony.sol` | the one assembler that may wire cells; `plantRoot`, `birth`, `harvestOne`, gas-bounded `harvestColony`, `graft`, `apoptosis`, treasury |
 
+### v2.1: the full organelle cast (`contracts/v2/organelles/`)
+
+Cell theory mapped to contract capabilities. Every organelle is an **optional,
+graftable module**: a template clone registered in the cell's Nucleus with a
+capability `Role`. The Colony's `graftTemplate` gives a living cell new organs
+(one-shot clone + bind + register); the **Ribosome automates** the same loop.
+
+| Organelle | Biology | Contract job | Role |
+|-----------|---------|--------------|------|
+| `Mitochondrion.sol` | respiration → ATP | deploys surplus capital into an external yield venue (Aave-style adapter), harvests accrued ATP as food, breathes out when the cell needs liquidity | WORKER |
+| `Ribosome.sol` | mRNA → protein | translates registered "gene" templates into fresh clone products; the in-cell evolution engine (order → translate → graft) | WORKER |
+| `GolgiApparatus.sol` | packages, tags, ships | scheduled, memo-tagged batch payments ("exocytosis"); ships a batch atomically only when this cycle's budget covers it whole | WORKER |
+| `Lysosome.sol` | digests waste, autophagy | reclaims expired keeper credits into the cell, executes condemned-organelle eviction, sweeps dust home | WORKER |
+| `Peroxisome.sol` | detoxification | community-reported agents (quorum-gated, non-enriching) get flagged; flagged revenue is sequestered; the Membrane refuses flagged agents | WORKER |
+| `Vacuole.sol` | storage, turgor, isolates toxins | time-locked tranches that flow back to the cell when mature; quarantine custody (jury-released only); exposes `pressure()` as the cell's turgor metric | WORKER |
+| `Membrane.sol` | selective permeability, receptors | the income organ: priced receptor bindings for agents/protocols/bots, per-payer metering, rate windows, overpay refund, shield-checked admission; tips forward to the cell | OTHER |
+
+**Gene expression (`Chloroplast.express()`).** Optional organelles never hold
+treasury keys. Each cycle, the metabolism opens a fresh cycle nonce, hands
+every WORKER a metered, expiring `spend` authorization (min of 25% of the
+cell's remaining discretionary food and a per-worker ceiling), and calls its
+`act(budget)`. Unspent authorization dies with the cycle. A failing organ is
+skipped (`OrganFailed`) - one damaged module cannot brick the cell. The
+keeper who triggers the cycle is reimbursed exactly like mitosis, so the
+daily work of the organism is self-funding too.
+
+**Capability lives in the registry.** `act()` only works for clones the cell
+currently registers as WORKER; the lysosome's "condemn → unregister" evicts a
+module's power instantly with no state to clean up. Daughter cells are born
+with their own fresh clones of every replicable organelle (templates cloned
+at birth, `BirthDefect` emitted if an organ refuses binding) - **acquired
+state is not inherited** (the daughter's mitochondrion must be configured
+anew): exactly right for an experiment about evolution, and where a future
+"epigenetics" module can choose what a daughter keeps.
+
 Security posture: templates bound immutably to their Colony, `_disableInitializers`
 on implementations, role-gated fund movement, CEI ordering, pull-payments, and a
 keeper-credit reserve that harvest deliberately never strands. See the PR review
@@ -209,21 +244,29 @@ notes for the specific inline justifications.
 
 ### Tests
 
-`npx hardhat test` → **39 passing**. Three v1 characterization suites (prove the
-flaws are real), two v2 suites (cell mechanics + economics). `npm run gas`
-prints per-function gas. `scripts/gas-study.js` regenerates `gas-study.json`
-(the bloat and cross-chain tables above).
+`npx hardhat test` → **68 passing** (v2.1: 29 organelle tests + full-organism
+end-to-end; v2.0: 39). Three v1 characterization suites (prove the flaws are
+real), two v2 suites (cell mechanics + economics), one v2.1 suite (organelle
+cast: income, respiration, shipping, recycling, quarantine, translation,
+expression resilience, inheritance). `npm run gas` prints per-function gas.
+`scripts/gas-study.js` regenerates `gas-study.json` (the bloat and cross-chain
+tables above).
 
 ---
 
 ## 7. Roadmap
 
 1. Deploy Colony to a Base Sepolia testnet; publish keeper-reimbursement params.
-2. Build the **Membrane** organelle (per-payer metered income) + a yield
-   **RESERVE** module (the photosynthesizer).
+2. ~~Build the Membrane organelle (fee-taking gateway) + a yield
+   RESERVE module (the photosynthesizer).~~ **Done in v2.1** (`Membrane`,
+   `Mitochondrion`); next step is the real Base adapter (Aave v3 `supply`/
+   `withdraw` behind `IYield`) instead of `MockYieldVault`.
 3. ERC-4337 wrapper so cells pay gas in tokens via a paymaster (full autonomy
    upgrade).
 4. Governance organelle for owner-less colonies (harvest recipient becomes a
    DAO), reputation scoring for which cells to propagate.
 5. Turntable: a colony that runs entirely on its own earned income for N days,
    measured by harvest-to-root vs total gas burned.
+6. Epigenetics: an expression policy module deciding which replicable
+   organelles daughters inherit configured - differentiation from a common
+   genome.
