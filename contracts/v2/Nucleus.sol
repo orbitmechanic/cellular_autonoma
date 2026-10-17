@@ -188,9 +188,79 @@ contract Nucleus is Initializable {
     function getOrganelleByRole(INucleus.Role r) public view returns (address) {
         for (uint256 i = 0; i < _names.length; i++) {
             INucleus.Organelle storage o = _byName[keccak256(bytes(_names[i]))].data;
-            if (o.role == r) return o.instance;
+            if (o.role == r && o.instance != address(0)) return o.instance;
         }
         return address(0);
+    }
+
+    /// @dev Non-reverting role test (capability checks in aux organelles).
+    function hasRole(address a, INucleus.Role r) external view returns (bool) {
+        bytes32 key = _byAddress[a];
+        if (key == bytes32(0) || _byName[key].indexPlusOne == 0) return false;
+        INucleus.Organelle storage o = _byName[key].data;
+        return o.instance == a && o.role == r;
+    }
+
+    /// @dev Organelles the metabolism activates each cycle (Role.WORKER).
+    function workersCount() external view returns (uint256) {
+        uint256 c = 0;
+        for (uint256 i = 0; i < _names.length; i++) {
+            INucleus.Organelle storage o = _byName[keccak256(bytes(_names[i]))].data;
+            if (o.role == INucleus.Role.WORKER && o.instance != address(0)) c++;
+        }
+        return c;
+    }
+
+    function workerAt(uint256 idx) external view returns (address) {
+        uint256 c = 0;
+        for (uint256 i = 0; i < _names.length; i++) {
+            INucleus.Organelle storage o = _byName[keccak256(bytes(_names[i]))].data;
+            if (o.role == INucleus.Role.WORKER && o.instance != address(0)) {
+                if (c == idx) return o.instance;
+                c++;
+            }
+        }
+        return address(0);
+    }
+
+    /// @dev Snapshot array the metabolism iterates over during a cycle.
+    function workerList() external view returns (address[] memory) {
+        uint256 c = 0;
+        uint256 i;
+        for (i = 0; i < _names.length; i++) {
+            INucleus.Organelle storage o = _byName[keccak256(bytes(_names[i]))].data;
+            if (o.role == INucleus.Role.WORKER && o.instance != address(0)) c++;
+        }
+        address[] memory out = new address[](c);
+        uint256 j = 0;
+        for (i = 0; i < _names.length; i++) {
+            INucleus.Organelle storage o = _byName[keccak256(bytes(_names[i]))].data;
+            if (o.role == INucleus.Role.WORKER && o.instance != address(0)) out[j++] = o.instance;
+        }
+        return out;
+    }
+
+    /// @dev Lysosome/Colony reclamation: tombstone an aux organelle so the
+    ///      metabolism stops activating it. Core roles can never be removed.
+    function unregisterAux(string calldata n) external {
+        bool core = msg.sender == COLONY;
+        if (!core) {
+            bytes32 callerKey = _byAddress[msg.sender];
+            if (callerKey == bytes32(0) || _byName[callerKey].indexPlusOne == 0) revert OnlyColony();
+            INucleus.Organelle storage caller = _byName[callerKey].data;
+            if (caller.instance != msg.sender || caller.role != INucleus.Role.WORKER) revert OnlyColony();
+        }
+        bytes32 key = keccak256(bytes(n));
+        require(_byName[key].indexPlusOne != 0, "Nucleus: not registered");
+        INucleus.Organelle storage o = _byName[key].data;
+        require(
+            o.role == INucleus.Role.WORKER || o.role == INucleus.Role.OTHER || o.role == INucleus.Role.RESERVE,
+            "Nucleus: core organelles are permanent"
+        );
+        delete _byAddress[o.instance];
+        o.instance = address(0);
+        o.template = address(0);
+        emit OrganelleRegistered(n, address(0), address(0), INucleus.Role.NONE, false);
     }
 
     function organelleCount() external view returns (uint256) {

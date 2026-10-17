@@ -12,16 +12,31 @@ and whose accumulated capital its colony **root owner can harvest**.
 - `contracts/v2/` — **v2** reference rewrite (Nucleus, Chloroplast, EnergyStore,
   Colony, ICell) that fixes v1 and adds the missing capital-harvest loop and
   self-funded metabolism. See `DESIGN.md` for the full analysis.
+- `contracts/v2/organelles/` — **v2.1** the full organelle cast as optional,
+  graftable modules: Mitochondrion (yield/ATP), Ribosome (in-cell module
+  translation), GolgiApparatus (scheduled batch payments), Lysosome (waste
+  recycling + organ eviction), Peroxisome (toxin screening/quarantine),
+  Vacuole (time-locked storage + quarantine custody + turgor), Membrane
+  (priced service receptors - the income organ). All run through the
+  Chloroplast's `express()` gene-expression cycle with metered, expiring
+  spend authorizations; daughters inherit fresh clones of every replicable
+  organelle at birth.
 
 ## What's here
 
 ```
 contracts/Nucleus.sol, Chloroplast.sol, Leucoplast.sol   # v1 (original)
-contracts/v2/ICell.sol Nucleus.sol EnergyStore.sol       # v2 organelles
+contracts/v2/ICell.sol Nucleus.sol EnergyStore.sol       # v2 core organelles
 contracts/v2/Chloroplast.sol Colony.sol                  # v2 metabolism + colony
-test/                     # 3 v1 characterization + 2 v2 suites (39 passing)
-scripts/gas-study.js      # bloat + cross-chain cost study -> gas-study.json
-DESIGN.md                 # findings, chain strategy, roadmap
+contracts/v2/organelles/                                 # v2.1 optional cast:
+    Mitochondrion Ribosome GolgiApparatus Lysosome
+    Peroxisome Vacuole Membrane
+contracts/mocks/            # MockYieldVault, MockProtein (test world)
+test/                       # 3 v1 characterization + 3 v2/v2.1 suites (68 passing)
+scripts/gas-study.js        # bloat + cross-chain cost study -> gas-study.json
+scripts/build_deck.py       # regenerates the findings deck in docs/
+DESIGN.md                   # findings, chain strategy, organelle map, roadmap
+docs/                       # 13-slide Impress deck (odp/pptx/pdf)
 ```
 
 ## Run it
@@ -29,7 +44,7 @@ DESIGN.md                 # findings, chain strategy, roadmap
 ```bash
 npm install
 npx hardhat compile
-npx hardhat test          # 39 passing
+npx hardhat test          # 68 passing
 npm run gas               # per-function gas report
 node scripts/gas-study.js # regenerate gas-study.json
 ```

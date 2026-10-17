@@ -1,0 +1,8 @@
+{
+  "express_idle_gas": 293572,
+  "express_full_cast_gas": 852663,
+  "express_cycle2_gas": 606712,
+  "replicate_with_proteome_gas": 2580278,
+  "daughter_organelles": 10,
+  "daughter_workers": 6
+}

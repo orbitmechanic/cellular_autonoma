@@ -9,9 +9,10 @@ interface INucleus {
         NONE, // caller not registered in this cell
         NUCLEUS, // the nucleus itself
         ENERGY, // capital storage (EnergyStore)
-        METABOLISM, // replication + keeper reimbursement (Chloroplast)
-        RESERVE, // long-horizon capital (staking/yield modules later)
-        OTHER // service organelles (membrane, ribosome, ... later)
+        METABOLISM, // replication + metabolism cycle (Chloroplast)
+        RESERVE, // long-horizon capital (vacuole, yield modules)
+        OTHER, // service organelles (membrane, peroxisome, ...)
+        WORKER // optional organelles activated each cycle via act(budget)
     }
 
     struct Organelle {
@@ -35,6 +36,21 @@ interface INucleus {
     function organelleAt(uint256 i) external view returns (Organelle memory);
     function organelleByName(string calldata n) external view returns (Organelle memory);
     function organelleNames() external view returns (string[] memory);
+    function workersCount() external view returns (uint256);
+    function workerAt(uint256 i) external view returns (address);
+    function workerList() external view returns (address[] memory);
+    function hasRole(address a, Role r) external view returns (bool);
+    function unregisterAux(string calldata n) external;
+}
+
+/// @dev Optional organelles (Role.WORKER) implement this so the cell's
+///      metabolism can activate them each cycle with a metered budget.
+interface IWorker {
+    /// @param budgetWei the maximum capital the metabolism just authorized
+    ///        this worker to spend from the cell this cycle.
+    function act(uint256 budgetWei) external;
+    /// @dev Optional human-readable tag for events/UI.
+    function label() external view returns (string memory);
 }
 
 interface IEnergyStore {
@@ -53,6 +69,24 @@ interface IEnergyStore {
     /// @dev Colony-only: push capital upward to `destination` (the parent
     ///      cell's energy store, or the colony harvest recipient for root).
     function remitUp(address destination, uint256 amount) external;
+    /// @dev Metabolism/Colony: authorize a WORKER organelle to pull up to
+    ///      `amount` of capital this cycle (cumulative ceiling).
+    function authorize(address worker, uint256 amount) external;
+    /// @dev Metabolism/Colony: begin a new expression cycle (resets all
+    ///      worker ceilings — unspent authorization dies with the next
+    ///      startCycle — and opens the window during which spend() may run).
+    function startCycle() external;
+    /// @dev Metabolism/Colony: close the spend window at cycle end. Workers
+    ///      cannot draw outside the window, so idle grafts are inert.
+    function endCycle() external;
+    /// @dev WORKER-only: move up to the unspent part of this worker's
+    ///      authorization out of the cell. Reverts for non-workers, and for
+    ///      amounts beyond the ceiling.
+    function spend(address payable recipient, uint256 amount) external;
+    function cycleCeiling(address worker) external view returns (uint256);
+    /// @dev Colony/lysosome: expire aged-out keeper credits back into
+    ///      the cell's discretionary balance (waste reclamation).
+    function digestExpiredCredits(uint256 maxOps) external returns (uint256 recovered);
 }
 
 interface IChloroplastV2 {
@@ -71,4 +105,8 @@ interface IColony {
     function maxRefundBps() external view returns (uint16);
     function maxRefundCap() external view returns (uint256);
     function birthFee() external view returns (uint256);
+    function cycleMinInterval() external view returns (uint256);
+    function workerBudgetBps() external view returns (uint16);
+    function perWorkerCeiling() external view returns (uint256);
+    function creditTTL() external view returns (uint256);
 }

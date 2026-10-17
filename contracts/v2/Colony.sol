@@ -4,6 +4,7 @@ pragma solidity ^0.8.21;
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {INucleus, IEnergyStore} from "./ICell.sol";
 import {Nucleus} from "./Nucleus.sol";
 import {EnergyStore} from "./EnergyStore.sol";
@@ -53,10 +54,17 @@ contract Colony is Ownable {
     uint256 public maxRefundCap = 1 ether; // absolute ceiling per trigger
     address public harvestRecipient;
 
+    // ---- expression-cycle economics (optional-organelle metabolism) ----
+    uint256 public cycleMinInterval = 1 hours; // how often workers may run
+    uint16 public workerBudgetBps = 2500; // up to 25% of discretionary food may flow to workers per cycle
+    uint256 public perWorkerCeiling = 5 ether; // hard per-worker cap per cycle
+    uint256 public creditTTL = 30 days; // unclaimed keeper credits past this are digestible
+
     event RootPlanted(address indexed nucleus, uint256 serial, uint256 endowment);
     event Birth(address indexed parent, address indexed child, uint256 serial, uint16 generation, uint256 endowment, uint256 tithe, uint256 fee);
     event Harvested(address indexed fromCell, uint256 amount, address indexed recipient);
     event Grafted(address indexed cell, string name, address instance, uint8 role);
+    event BirthDefect(address indexed child, address organelleClone);
     event Apoptosis(address indexed cell, uint256 swept);
 
     constructor() Ownable(msg.sender) {
@@ -161,6 +169,14 @@ contract Colony is Ownable {
                 require(o.template != address(0), "Colony: replicable organelle lacks template");
                 insts[j] = Clones.clone(o.template);
                 tmpls[j] = o.template;
+                // Give the newborn organ its cell: every v2 organelle
+                // exposes initialize(address nucleus). Modules that don't
+                // (raw proteins) simply skip. If initialization reverts we
+                // make noise rather than shipping a dead organ.
+                (bool ok, ) = insts[j].call(abi.encodeWithSignature("initialize(address)", child));
+                if (!ok) {
+                    emit BirthDefect(child, insts[j]);
+                }
             } else {
                 insts[j] = o.instance; // shared symbiont: pointer copied, not cloned
                 tmpls[j] = o.template;
@@ -246,10 +262,44 @@ contract Colony is Ownable {
         emit Grafted(cell, organelleName, instance, role);
     }
 
+    /**
+     * @dev Curator bootstrap for the optional organelle cast: clone a
+     *      template, bind it to THIS live cell, and graft it in one step.
+     *      This is the manual equivalent of what the Ribosome automates
+     *      (translate a program -> product -> graft), so an existing cell
+     *      can be given new organs it was not born with.
+     */
+    function graftTemplate(address cell, string calldata organelleName, address template, uint8 role, bool replicable) external onlyOwner returns (address instance) {
+        require(isCell[cell], "Colony: unknown cell");
+        require(template.code.length > 0, "Colony: template has no code");
+        instance = Clones.clone(template);
+        // Bind to the cell. The v2 organelles expose initialize(address);
+        // a raw module without that entrypoint is still grafted (best-effort)
+        // so the curator can install arbitrary proteins.
+        (bool ok, ) = instance.call(abi.encodeWithSignature("initialize(address)", cell));
+        require(ok, "Colony: graft init failed");
+        Nucleus(cell).graftExternal(organelleName, instance, template, role, replicable);
+        emit Grafted(cell, organelleName, instance, role);
+    }
+
+    /**
+     * @dev Curator bridge: forward a call to one of a cell's own organelles,
+     *      executed AS the Colony so organelle core-gates (onlyCellCore,
+     *      configure, registerService, condemn, schedule, program...) accept
+     *      it. The owner already holds full capital authority over the colony
+     *      (harvest/apoptosis); this is the configuration counterpart. The
+     *      target must be a registered organelle of `cell` - the bridge can
+     *      never touch a stranger contract.
+     */
+    function administer(address cell, address target, bytes calldata data) external onlyOwner returns (bytes memory) {
+        require(isCell[cell], "Colony: unknown cell");
+        require(INucleus(cell).getRole(target) != INucleus.Role.NONE, "Colony: target not an organelle of this cell");
+        return Address.functionCall(target, data);
+    }
+
     /// @dev Programmed cell death: sweep everything to the harvestRecipient
     ///      and mark the nucleus dead. Keeps treasury out of zombie cells.
-    function apoptosis(address cell) external onlyOwner {
-        require(isCell[cell], "Colony: unknown cell");
+    function apoptosis(address cell) external onlyOwner {        require(isCell[cell], "Colony: unknown cell");
         address energy = INucleus(cell).getOrganelleByRole(INucleus.Role.ENERGY);
         uint256 bal = energy == address(0) ? 0 : address(energy).balance;
         if (bal > 0) IEnergyStore(energy).withdraw(payable(harvestRecipient), bal);
@@ -272,6 +322,15 @@ contract Colony is Ownable {
     function setHarvestRecipient(address who) external onlyOwner {
         require(who != address(0), "Colony: zero recipient");
         harvestRecipient = who;
+    }
+
+    /// @dev Owner tunes the worker expression cycle (v2.1 organelle cast).
+    function setCycleParams(uint256 interval, uint16 workerBudgetBps_, uint256 perWorkerCeiling_, uint256 creditTTL_) external onlyOwner {
+        require(workerBudgetBps_ <= 10000, "Colony: bps > 100%");
+        cycleMinInterval = interval;
+        workerBudgetBps = workerBudgetBps_;
+        perWorkerCeiling = perWorkerCeiling_;
+        creditTTL = creditTTL_;
     }
 
     /// @dev Owner tunes the keeper gas budget per chain (mainnet vs L2 vs
