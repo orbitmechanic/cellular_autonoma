@@ -45,7 +45,7 @@ docs/                       # Impress decks (odp/pptx/pdf)
 A React + ethers site for deploying and managing colonies from a browser:
 connect wallet -> plant an organism -> graft organs -> run keeper actions ->
 watch health, capital and lineage live, and harvest. Deploys to GitHub Pages
-via `.github/workflows/deploy-pages.yml` (set Pages source to "GitHub Actions"
+via `web/workflows/deploy-pages.yml` (copy it to `.github/workflows/` — see PR notes) (set Pages source to "GitHub Actions"
 once; then every push to `main` that touches `web/` publishes). For local dev:
 
 ```bash
